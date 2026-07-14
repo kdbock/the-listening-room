@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
+import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
 
@@ -36,6 +37,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [importing, setImporting] = useState(false);
   const [savingSceneId, setSavingSceneId] = useState("");
   const [sceneStatus, setSceneStatus] = useState("");
+  const [renderJob, setRenderJob] = useState<RenderJobRecord | null>(null);
   const [error, setError] = useState("");
   const [manuscriptText, setManuscriptText] = useState("");
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
@@ -137,6 +139,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   useEffect(() => {
     loadWorkspace();
   }, [bookId]);
+
+  useEffect(() => {
+    if (!activeScene?.id || activeScene.id.startsWith("preview-")) {
+      setRenderJob(null);
+      return;
+    }
+
+    (async () => {
+      try {
+        setRenderJob(await getLatestRenderJob(activeScene.id));
+      } catch {
+        setRenderJob(null);
+      }
+    })();
+  }, [activeScene?.id]);
 
   useEffect(() => {
     if (loading || importing || attemptedAutoImport.current || scenes.length || !book) return;
@@ -255,7 +272,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       approvals: { ...activeScene.approvals, draft: true, sfx: true, music: true },
       final_mix_status: "ready_to_render",
     });
-    setSceneStatus(nextId ? `Scene ready for render queue. Moving to the next scene.` : `Scene ready for render queue.`);
+    const job = await queueRenderJob({
+      bookId: activeScene.book_id,
+      sceneId: activeScene.id,
+      sceneTitle: activeScene.title,
+    });
+    setRenderJob(job);
+    setSceneStatus(nextId ? `Scene queued for rendering. Moving to the next scene.` : `Scene queued for rendering.`);
     if (nextId) {
       setActiveSceneId(nextId);
       setTab("script");
@@ -553,11 +576,19 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "compare" && (
                   <>
-                    <p className="muted">This compare stage is where draft, sound-effects, and final mix states come together. The cloud renderer is not attached yet, so this stage currently tracks approval and progression instead of generating the final WAV.</p>
+                    <p className="muted">This compare stage is where draft, sound-effects, and final mix states come together. The render queue now creates a real job record that Cloud Run will pick up once the worker is connected.</p>
                     <div className="studio-list">
                       <div className="studio-render-card"><strong>Draft</strong><small>{approval(activeScene, "draft") ? "Approved" : "Pending"}</small></div>
                       <div className="studio-render-card"><strong>With sound effects</strong><small>{approval(activeScene, "sfx") ? "Approved" : "Pending"}</small></div>
                       <div className="studio-render-card"><strong>With music background</strong><small>{approval(activeScene, "music") ? "Approved" : "Pending"}</small></div>
+                    </div>
+                    <div className="studio-render-card">
+                      <strong>Render job</strong>
+                      <small>
+                        {renderJob
+                          ? `${renderJob.status} · requested ${new Date(renderJob.requested_at).toLocaleString()}`
+                          : "No render job queued yet."}
+                      </small>
                     </div>
                     <div className="actions">
                       <button className="button primary" onClick={markReadyToRender}>Mark scene ready for render queue</button>

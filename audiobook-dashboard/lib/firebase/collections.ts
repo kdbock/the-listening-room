@@ -8,6 +8,7 @@ export const firestoreCollections = {
   soundEffectCues: "sfx_cues",
   musicCues: "music_cues",
   renders: "renders",
+  renderJobs: "render_jobs",
   soundLibraryIndex: "sound_library_index",
 } as const;
 
