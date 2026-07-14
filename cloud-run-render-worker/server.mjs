@@ -42,11 +42,16 @@ const db = getFirestore();
 const storage = getStorage();
 
 async function reserveNextQueuedJob() {
-  const snapshot = await db
-    .collection("render_jobs")
-    .where("status", "==", "queued")
-    .limit(5)
-    .get();
+  let snapshot;
+  try {
+    snapshot = await db
+      .collection("render_jobs")
+      .where("status", "==", "queued")
+      .limit(5)
+      .get();
+  } catch (error) {
+    throw new Error(`Could not read queued render jobs: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   for (const doc of snapshot.docs) {
     const claimed = await db.runTransaction(async (transaction) => {
@@ -75,10 +80,17 @@ async function reserveNextQueuedJob() {
 }
 
 async function loadSceneBundle(job) {
-  const [sceneDoc, bookDoc] = await Promise.all([
-    db.collection("scenes").doc(job.scene_id).get(),
-    db.collection("books").doc(job.book_id).get(),
-  ]);
+  let sceneDoc;
+  let bookDoc;
+
+  try {
+    [sceneDoc, bookDoc] = await Promise.all([
+      db.collection("scenes").doc(job.scene_id).get(),
+      db.collection("books").doc(job.book_id).get(),
+    ]);
+  } catch (error) {
+    throw new Error(`Could not load Firestore scene/book records: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   if (!sceneDoc.exists) {
     throw new Error(`Scene ${job.scene_id} was not found.`);
@@ -126,10 +138,14 @@ async function renderScenePackage({ job, scene, book }) {
     },
   };
 
-  await storage.bucket(bucketName).file(artifactPath).save(
-    JSON.stringify(artifact, null, 2),
-    { contentType: "application/json; charset=utf-8" },
-  );
+  try {
+    await storage.bucket(bucketName).file(artifactPath).save(
+      JSON.stringify(artifact, null, 2),
+      { contentType: "application/json; charset=utf-8" },
+    );
+  } catch (error) {
+    throw new Error(`Could not write render artifact to Storage: ${error instanceof Error ? error.message : String(error)}`);
+  }
 
   return { outputPath: artifactPath };
 }
@@ -141,20 +157,28 @@ async function completeJob(jobId, outputPath) {
   const job = jobSnap.data();
   if (!job) return;
 
-  await jobRef.update({
-    status: "completed",
-    output_path: outputPath,
-    completed_at: completedAt,
-    updated_at: completedAt,
-  });
-
-  if (job.scene_id) {
-    await db.collection("scenes").doc(job.scene_id).update({
-      final_mix_status: "ready_to_render",
-      render_job_status: "completed",
-      render_output_path: outputPath,
+  try {
+    await jobRef.update({
+      status: "completed",
+      output_path: outputPath,
+      completed_at: completedAt,
       updated_at: completedAt,
     });
+  } catch (error) {
+    throw new Error(`Could not update render job completion: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  if (job.scene_id) {
+    try {
+      await db.collection("scenes").doc(job.scene_id).update({
+        final_mix_status: "ready_to_render",
+        render_job_status: "completed",
+        render_output_path: outputPath,
+        updated_at: completedAt,
+      });
+    } catch (error) {
+      throw new Error(`Could not update scene render status: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 }
 
