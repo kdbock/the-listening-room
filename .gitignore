@@ -1,0 +1,52 @@
+# macOS and editor artifacts
+.DS_Store
+*.swp
+*.swo
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+
+# Python caches
+**/__pycache__/
+*.py[cod]
+
+# JavaScript dependencies and build output
+**/node_modules/
+**/.next/
+**/.vinext/
+**/.wrangler/
+**/dist/
+**/out/
+**/coverage/
+
+# Temporary source extraction
+/tmp/
+
+# Local manuscripts, production state, and generated audio
+/tts-ready/
+/tts-google-ready/
+/*.m3u8
+/local-narrator/audio/
+/local-narrator/backups-before-*/
+/local-narrator/complete-listen-through/
+/local-narrator/parts-wav/
+/local-narrator/playlist-overrides/
+/local-narrator/production-workspace/
+/local-narrator/rejected-tests/
+/local-narrator/sound-designed/
+/local-narrator/transcript-checks/
+/local-narrator/voice-approved/
+/local-narrator/voice-auditions/
+
+# Preserved metadata from the dashboard's former standalone local repository
+/audiobook-dashboard/.legacy-git/
+
+# Audio masters and review renders stay local
+*.wav
+*.m4a
+*.mp3
+*.flac
+*.aiff

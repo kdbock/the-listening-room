@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""Render one approved scene with the locked narrator, sentence by sentence."""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import wave
+
+import numpy as np
+from mlx_audio.tts.generate import generate_audio
+from mlx_audio.tts.utils import load_model
+
+
+APP_DIR = Path(__file__).resolve().parent
+PROJECT = APP_DIR.parents[1]
+MODEL_ID = "mlx-community/Qwen3-TTS-12Hz-1.7B-Base-8bit"
+ABBREVIATIONS = {"mr.", "mrs.", "ms.", "dr.", "st.", "capt.", "lt.", "no."}
+
+
+def split_sentences(paragraph: str) -> list[str]:
+    paragraph = re.sub(r"\s+", " ", paragraph.strip())
+    if not paragraph:
+        return []
+    parts: list[str] = []
+    start = 0
+    i = 0
+    closers = '.?!"\'”’*'
+    while i < len(paragraph):
+        if paragraph[i] not in ".?!":
+            i += 1
+            continue
+        j = i + 1
+        while j < len(paragraph) and paragraph[j] in closers:
+            j += 1
+        candidate = paragraph[start:j].strip()
+        final_word = candidate.lower().split()[-1] if candidate else ""
+        if (j == len(paragraph) or paragraph[j].isspace()) and final_word not in ABBREVIATIONS:
+            if candidate:
+                parts.append(candidate)
+            while j < len(paragraph) and paragraph[j].isspace():
+                j += 1
+            start = j
+            i = j
+        else:
+            i += 1
+    tail = paragraph[start:].strip()
+    if tail:
+        parts.append(tail)
+    return parts or [paragraph]
+
+
+def read_wav(path: Path) -> tuple[np.ndarray, int]:
+    with wave.open(str(path), "rb") as audio:
+        if audio.getnchannels() != 1 or audio.getsampwidth() != 2:
+            raise ValueError(f"Unexpected WAV format: {path}")
+        return np.frombuffer(audio.readframes(audio.getnframes()), dtype=np.int16).copy(), audio.getframerate()
+
+
+def trim_edges(samples: np.ndarray, rate: int) -> np.ndarray:
+    if samples.size == 0:
+        return samples
+    window = max(1, int(rate * 0.02))
+    usable = samples[: samples.size - (samples.size % window)]
+    if usable.size == 0:
+        return samples
+    blocks = usable.reshape(-1, window).astype(np.float32)
+    rms = np.sqrt(np.mean((blocks / 32768.0) ** 2, axis=1))
+    active = np.flatnonzero(rms > 0.004)
+    if active.size == 0:
+        return samples
+    start = max(0, int(active[0] * window) - int(rate * 0.08))
+    end = min(samples.size, int((active[-1] + 1) * window) + int(rate * 0.14))
+    return samples[start:end]
+
+
+def write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
+    if path.exists():
+        raise FileExistsError(f"Refusing to overwrite {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".wav.tmp")
+    with wave.open(str(temporary), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(rate)
+        audio.writeframes(samples.astype(np.int16).tobytes())
+    os.replace(temporary, path)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--segments-dir", type=Path, required=True)
+    args = parser.parse_args()
+    plan_path, output, segments_dir = args.plan.resolve(), args.output.resolve(), args.segments_dir.resolve()
+    if output.exists():
+        raise FileExistsError(f"Refusing to overwrite {output}")
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    units: list[tuple[str, bool, str, str, str]] = []
+    for planned in plan.get("units", []):
+        paragraphs = [p.strip() for p in str(planned.get("text", "")).split("\n\n") if p.strip()]
+        for paragraph in paragraphs:
+            sentences = split_sentences(paragraph)
+            units.extend((
+                sentence, i == len(sentences) - 1, str(planned["speaker"]),
+                str(planned["reference_audio"]), str(planned["reference_text"]),
+            ) for i, sentence in enumerate(sentences))
+    if not units:
+        raise ValueError("No sentences were found in the approved scene text.")
+    segments_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Loading approved voices for {len(units)} sentence(s)…", flush=True)
+    model = load_model(MODEL_ID)
+    assembled: list[np.ndarray] = []
+    sample_rate = 24000
+    manifest_units = []
+    for index, (sentence, ends_paragraph, speaker, reference_audio, reference_text) in enumerate(units, start=1):
+        digest = hashlib.sha256(f"{speaker}\n{sentence}".encode("utf-8")).hexdigest()[:10]
+        speaker_slug = re.sub(r"[^a-z0-9]+", "-", speaker.casefold()).strip("-")
+        prefix = f"{index:04d}-{speaker_slug}-{digest}"
+        generated = segments_dir / f"{prefix}_000.wav"
+        reused = generated.exists()
+        print(f"sentence {index}/{len(units)} {speaker} {'reused' if reused else 'rendering'}", flush=True)
+        if not reused:
+            with contextlib.redirect_stdout(io.StringIO()):
+                generate_audio(
+                    text=sentence, model=model, max_tokens=1024, voice=None, lang_code="en",
+                    ref_audio=reference_audio, ref_text=reference_text,
+                    output_path=str(segments_dir), file_prefix=prefix, audio_format="wav",
+                    temperature=0.65, verbose=False,
+                )
+        samples, sample_rate = read_wav(generated)
+        assembled.append(trim_edges(samples, sample_rate))
+        pause_seconds = 0.72 if ends_paragraph else 0.32
+        if index == 1:
+            pause_seconds = 0.95
+        assembled.append(np.zeros(round(sample_rate * pause_seconds), dtype=np.int16))
+        manifest_units.append({"index": index, "speaker": speaker, "text": sentence, "asset": generated.name, "reused": reused, "ends_paragraph": ends_paragraph, "reference_audio": reference_audio})
+    write_wav(output, np.concatenate(assembled), sample_rate)
+    manifest = {
+        "plan": str(plan_path), "source": plan.get("source_snapshot"), "output": str(output), "model": MODEL_ID,
+        "sample_rate": sample_rate,
+        "sentence_count": len(units), "sentences": manifest_units,
+    }
+    output.with_suffix(".json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"Finished {output}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

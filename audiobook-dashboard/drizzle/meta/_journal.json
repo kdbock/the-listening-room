@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1783969266366,
+      "tag": "0000_eager_karnak",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1784025352302,
+      "tag": "0001_legal_iceman",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1784025667566,
+      "tag": "0002_clammy_triton",
+      "breakpoints": true
+    }
+  ]
+}
