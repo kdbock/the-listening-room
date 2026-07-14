@@ -182,7 +182,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     }
   }
 
-  async function updateScene(scene: SceneRecord) {
+  async function updateScene(scene: SceneRecord, nextTab?: TabKey) {
     if (scene.id.startsWith("preview-")) {
       setSceneStatus("Your scenes are still finishing their first save. Give it a moment, then try again.");
       return;
@@ -193,6 +193,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     try {
       await saveScene(scene);
       setSceneStatus(`Saved ${scene.title}.`);
+      if (nextTab) setTab(nextTab);
     } catch (err) {
       setSceneStatus(err instanceof Error ? err.message : "Could not save this scene yet.");
     } finally {
@@ -206,7 +207,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       ...activeScene,
       speakers: activeScene.speakers.map((speaker) => ({ ...speaker, status: "approved" })),
       final_mix_status: "voices_approved",
-    });
+    }, "sfx");
   }
 
   async function toggleCue(kind: "sfx_cues" | "ambience_cues", cueId: string) {
@@ -219,7 +220,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         kind === "sfx_cues"
           ? "sfx_approved"
           : "ambience_approved",
-    });
+    }, kind === "sfx_cues" ? "ambience" : "render");
   }
 
   async function markReadyToRender() {
@@ -333,7 +334,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       }}
                     />
                     <div className="actions">
-                      <button className="button primary" disabled={savingSceneId === activeScene.id || activeScene.id.startsWith("preview-")} onClick={() => updateScene({ ...activeScene, text: activeScene.text })}>
+                      <button className="button primary" disabled={savingSceneId === activeScene.id || activeScene.id.startsWith("preview-")} onClick={() => updateScene({ ...activeScene, text: activeScene.text }, "voices")}>
                         {savingSceneId === activeScene.id ? "Saving scene…" : "Save scene text"}
                       </button>
                     </div>
