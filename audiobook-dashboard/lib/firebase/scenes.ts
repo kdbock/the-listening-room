@@ -25,6 +25,8 @@ export type StudioDialogueAssignment = {
   speaker: string;
   text: string;
   color: string;
+  start?: number;
+  end?: number;
 };
 
 export type StudioCue = {

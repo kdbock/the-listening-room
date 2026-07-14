@@ -73,6 +73,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manualSpeakerName, setManualSpeakerName] = useState("");
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedDialogueText, setSelectedDialogueText] = useState("");
+  const [selectedDialogueRange, setSelectedDialogueRange] = useState<{ start: number; end: number } | null>(null);
   const attemptedAutoImport = useRef(false);
 
   function approval(scene: SceneRecord | null, key: "script" | "voice" | "draft" | "sfx" | "music") {
@@ -156,10 +157,14 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
     for (const assignment of assignments) {
       if (!assignment.text.trim()) continue;
-      let start = text.indexOf(assignment.text);
-      while (start >= 0) {
-        ranges.push({ start, end: start + assignment.text.length, speaker: assignment.speaker, color: assignment.color });
-        start = text.indexOf(assignment.text, start + assignment.text.length);
+      if (typeof assignment.start === "number" && typeof assignment.end === "number" && assignment.end > assignment.start) {
+        ranges.push({ start: assignment.start, end: assignment.end, speaker: assignment.speaker, color: assignment.color });
+      } else {
+        let start = text.indexOf(assignment.text);
+        while (start >= 0) {
+          ranges.push({ start, end: start + assignment.text.length, speaker: assignment.speaker, color: assignment.color });
+          start = text.indexOf(assignment.text, start + assignment.text.length);
+        }
       }
     }
 
@@ -185,14 +190,14 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       nonOverlapping.push(range);
     }
 
-    const segments: Array<{ text: string; speaker?: string; color?: string; missed?: boolean }> = [];
+    const segments: Array<{ text: string; start: number; end: number; speaker?: string; color?: string; missed?: boolean }> = [];
     let cursor = 0;
     for (const range of nonOverlapping) {
-      if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start) });
-      segments.push({ text: text.slice(range.start, range.end), speaker: range.speaker, color: range.color, missed: range.missed });
+      if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start), start: cursor, end: range.start });
+      segments.push({ text: text.slice(range.start, range.end), start: range.start, end: range.end, speaker: range.speaker, color: range.color, missed: range.missed });
       cursor = range.end;
     }
-    if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+    if (cursor < text.length) segments.push({ text: text.slice(cursor), start: cursor, end: text.length });
     return segments;
   }
 
@@ -540,8 +545,46 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   }
 
   function captureSelectedDialogueText() {
-    const selected = window.getSelection()?.toString().trim() || "";
-    if (selected) setSelectedDialogueText(selected);
+    const selection = window.getSelection();
+    const selected = selection?.toString().trim() || "";
+    if (!selected || !activeScene) return;
+    setSelectedDialogueText(selected);
+
+    const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+    if (!range) {
+      setSelectedDialogueRange(null);
+      return;
+    }
+    const container = document.querySelector("[data-speaker-text-preview='true']");
+    if (!container || !container.contains(range.commonAncestorContainer)) {
+      setSelectedDialogueRange(null);
+      return;
+    }
+    const segmentElements = Array.from(container.querySelectorAll<HTMLElement>("[data-start][data-end]"));
+    let start: number | null = null;
+    let end: number | null = null;
+    for (const element of segmentElements) {
+      if (!range.intersectsNode(element)) continue;
+      const segmentStart = Number(element.dataset.start || 0);
+      const textLength = element.textContent?.length || 0;
+      let localStart = 0;
+      let localEnd = textLength;
+      if (element.contains(range.startContainer)) {
+        const beforeRange = document.createRange();
+        beforeRange.selectNodeContents(element);
+        beforeRange.setEnd(range.startContainer, range.startOffset);
+        localStart = beforeRange.toString().length;
+      }
+      if (element.contains(range.endContainer)) {
+        const beforeEndRange = document.createRange();
+        beforeEndRange.selectNodeContents(element);
+        beforeEndRange.setEnd(range.endContainer, range.endOffset);
+        localEnd = beforeEndRange.toString().length;
+      }
+      start = start === null ? segmentStart + localStart : Math.min(start, segmentStart + localStart);
+      end = end === null ? segmentStart + localEnd : Math.max(end, segmentStart + localEnd);
+    }
+    setSelectedDialogueRange(start !== null && end !== null && end > start ? { start, end } : null);
   }
 
   async function assignSelectedTextToSpeaker(speakerName = selectedSpeakerName) {
@@ -559,6 +602,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       speaker: speaker.name,
       text: selected,
       color,
+      start: selectedDialogueRange?.start,
+      end: selectedDialogueRange?.end,
     };
     const existingAssignments = activeScene.dialogue_assignments ?? [];
     await updateScene({
@@ -569,6 +614,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       final_mix_status: "draft",
     });
     setSelectedDialogueText("");
+    setSelectedDialogueRange(null);
     setSelectedSpeakerName(speaker.name);
     window.getSelection()?.removeAllRanges();
     setSceneStatus(`Assigned selected text to ${speaker.name}.`);
@@ -886,7 +932,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           </div>
                           <button className="button ghost" onClick={captureSelectedDialogueText}>Use selected text</button>
                         </div>
-                        <div className="speaker-highlight-text" onMouseUp={captureSelectedDialogueText}>
+                        <div className="speaker-highlight-text" data-speaker-text-preview="true" onMouseUp={captureSelectedDialogueText}>
                           {highlightedDialogueSegments(activeScene).map((segment, index) => (
                             segment.speaker ? (
                               <mark
@@ -894,11 +940,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                 className={`speaker-mark ${segment.missed ? "missed" : ""}`}
                                 style={{ backgroundColor: segment.color }}
                                 title={`${segment.speaker}${segment.missed ? " — needs assignment" : ""}`}
+                                data-start={segment.start}
+                                data-end={segment.end}
                               >
                                 {segment.text}
                               </mark>
                             ) : (
-                              <span key={`plain-${index}`}>{segment.text}</span>
+                              <span key={`plain-${index}`} data-start={segment.start} data-end={segment.end}>{segment.text}</span>
                             )
                           ))}
                         </div>
@@ -911,7 +959,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               placeholder="Select dialogue above, or paste missed text here."
                             />
                           </label>
-                          <small>Click a speaker below to assign this text.</small>
+                          <small>{selectedDialogueRange ? `Selected characters ${selectedDialogueRange.start}–${selectedDialogueRange.end}. ` : ""}Click a speaker below to assign this text.</small>
                         </div>
                       </div>
                       <div className="speaker-side-card">

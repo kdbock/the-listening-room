@@ -298,6 +298,8 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     .map((assignment) => ({
       speaker: String(assignment.speaker),
       text: String(assignment.text).trim(),
+      start: Number.isFinite(Number(assignment.start)) ? Number(assignment.start) : null,
+      end: Number.isFinite(Number(assignment.end)) ? Number(assignment.end) : null,
     }));
   const fallbackDialogueSpeaker = approvedSpeakers.length === 1 ? approvedSpeakers[0] : null;
   const quotePattern = /[“"]([^”"]+)[”"]/g;
@@ -309,6 +311,18 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
   }
 
   for (const assignment of manualAssignments) {
+    if (assignment.start !== null && assignment.end !== null && assignment.end > assignment.start) {
+      const speaker = referenceForSpeaker(assignment.speaker);
+      if (speaker) {
+        ranges.push({
+          start: Math.max(0, assignment.start),
+          end: Math.min(text.length, assignment.end),
+          text: text.slice(Math.max(0, assignment.start), Math.min(text.length, assignment.end)).trim() || assignment.text,
+          speaker,
+        });
+      }
+      continue;
+    }
     let start = text.indexOf(assignment.text);
     while (start >= 0) {
       const speaker = referenceForSpeaker(assignment.speaker);
