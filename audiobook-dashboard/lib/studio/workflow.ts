@@ -2,25 +2,27 @@ import type { SceneRecord, StudioCue, StudioSpeaker } from "@/lib/firebase/scene
 
 const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
 
-const sfxRules: Array<{ terms: string[]; label: string; reason: string }> = [
-  { terms: ["door", "knock", "entered", "emerged", "left", "leaving"], label: "Door and threshold movement", reason: "A character enters, exits, or crosses a threshold here." },
-  { terms: ["footstep", "walk", "paced", "crossed", "stairs", "towards"], label: "Character footsteps", reason: "Physical movement can give this beat shape without overpowering the narration." },
-  { terms: ["car", "truck", "drive", "engine", "parking"], label: "Vehicle movement", reason: "A vehicle action or nearby vehicle is part of the scene." },
-  { terms: ["box", "boxes", "suitcase", "bag", "packed"], label: "Boxes and luggage handling", reason: "Handled objects can make the physical business of the scene audible." },
-  { terms: ["phone", "called", "calling", "text me"], label: "Phone handling or ring", reason: "A phone action creates a clear, optional sound-design beat." },
-  { terms: ["cry", "tears", "sob", "scream"], label: "Subtle cloth and breath detail", reason: "A restrained close detail could support the emotional action without literalizing it." },
-  { terms: ["rain", "storm", "wind", "thunder"], label: "Weather accent", reason: "The environment includes weather detail worth testing." },
-  { terms: ["ship", "boat", "deck", "harbor", "sea", "shore"], label: "Water or vessel detail", reason: "The language points to a nautical environment cue." },
-  { terms: ["bell", "church", "clock", "christmas music"], label: "Bell or music-source detail", reason: "The text includes a specific audible source that can locate the listener." },
-  { terms: ["kiss", "hug", "arms around"], label: "Clothing movement", reason: "Very light fabric movement could make this intimate action feel present." },
+const masculineNames = ["gregory", "greg", "john", "michael", "david", "daniel", "james", "robert", "william", "the ferryman"];
+const feminineNames = ["kimberly", "megan", "meg", "kristy", "sarah", "nix", "orra", "ressa", "tamsin", "lio", "vessa"];
+
+const sfxRules: Array<{ terms: string[]; required?: string[]; label: string; reason: string }> = [
+  { terms: ["knock", "knocked", "knocking"], label: "Door knock", reason: "A specific knock is written into the action." },
+  { terms: ["door opened", "door closed", "door slammed", "opened the door", "closed the door", "slammed the door"], label: "Door open / close", reason: "A specific door action is written into the scene." },
+  { terms: ["footsteps", "heels clicked", "boots thudded", "stairs creaked"], label: "Specific footsteps", reason: "The text calls out audible movement, not just general walking." },
+  { terms: ["engine started", "engine idled", "car door", "truck door", "tires screeched"], label: "Vehicle action", reason: "A concrete vehicle sound is written into the action." },
+  { terms: ["phone rang", "phone buzzed", "text alert", "voicemail beep"], label: "Phone alert", reason: "The phone makes an explicit audible sound." },
+  { terms: ["glass shattered", "glass broke", "plate shattered", "cup shattered"], label: "Breaking glass", reason: "The scene contains a sharp break event." },
+  { terms: ["thunder cracked", "thunder rumbled", "rain hit", "rain hammered"], label: "Weather accent", reason: "The weather is doing something audible at this moment." },
+  { terms: ["bell rang", "bells rang", "clock chimed", "alarm sounded"], label: "Bell / alarm", reason: "A clear source sound is named in the text." },
 ];
 
 const ambienceRules: Array<{ terms: string[]; label: string; reason: string }> = [
-  { terms: ["night", "dark", "quiet"], label: "Low night room tone", reason: "The scene reads like a restrained low-light environment." },
-  { terms: ["street", "city", "market", "crowd"], label: "Urban background bed", reason: "The setting suggests distant public activity." },
+  { terms: ["kitchen", "refrigerator", "stove", "sink"], label: "Quiet kitchen room tone", reason: "The setting appears to be a kitchen or domestic work area." },
+  { terms: ["bedroom", "bed", "dresser", "closet"], label: "Soft bedroom room tone", reason: "The setting appears to be a private bedroom." },
+  { terms: ["street", "sidewalk", "traffic", "city"], label: "Distant street ambience", reason: "The setting includes an urban exterior." },
   { terms: ["sea", "shore", "harbor", "dock", "ship"], label: "Harbor / sea ambience", reason: "The setting points to coastal or ship atmosphere." },
-  { terms: ["forest", "woods", "birds", "wind"], label: "Natural exterior ambience", reason: "The text suggests an outdoor organic bed." },
-  { terms: ["church", "cathedral", "hall"], label: "Large interior room tone", reason: "The scene feels like it belongs in a resonant interior space." },
+  { terms: ["forest", "woods", "birds"], label: "Light natural exterior ambience", reason: "The setting is outdoors in a natural environment." },
+  { terms: ["church", "cathedral"], label: "Large interior room tone", reason: "The setting is a resonant religious interior." },
 ];
 
 function cleanLine(line: string) {
@@ -76,9 +78,26 @@ function extractSpeakers(text: string): StudioSpeaker[] {
     line_count,
     recommended_voice: "",
     approved_voice: "",
+    gender: inferSpeakerGender(text, name),
     color: speakerColors[index % speakerColors.length],
     status: "recommended",
   }));
+}
+
+function inferSpeakerGender(text: string, name: string): StudioSpeaker["gender"] {
+  const lowerName = name.toLowerCase();
+  if (masculineNames.some((entry) => lowerName.includes(entry))) return "masculine";
+  if (feminineNames.some((entry) => lowerName.includes(entry))) return "feminine";
+  const firstName = name.split(/\s+/)[0];
+  if (!firstName || name === "Unassigned") return "unknown";
+  const escapedName = firstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const contextPattern = new RegExp(`(?:\\b(?:he|him|his|she|her|hers)\\b.{0,80}\\b${escapedName}\\b|\\b${escapedName}\\b.{0,80}\\b(?:he|him|his|she|her|hers)\\b)`, "gi");
+  const contexts = Array.from(text.matchAll(contextPattern)).map((match) => match[0].toLowerCase());
+  const masculineHits = contexts.filter((context) => /\b(he|him|his)\b/.test(context)).length;
+  const feminineHits = contexts.filter((context) => /\b(she|her|hers)\b/.test(context)).length;
+  if (masculineHits > feminineHits) return "masculine";
+  if (feminineHits > masculineHits) return "feminine";
+  return "unknown";
 }
 
 function cueTime(text: string, terms: string[]) {
@@ -90,10 +109,10 @@ function cueTime(text: string, terms: string[]) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function buildCues(text: string, rules: Array<{ terms: string[]; label: string; reason: string }>, limit = 6): StudioCue[] {
+function buildCues(text: string, rules: Array<{ terms: string[]; required?: string[]; label: string; reason: string }>, limit = 6): StudioCue[] {
   const lower = text.toLowerCase();
   return rules
-    .filter((rule) => rule.terms.some((term) => lower.includes(term)))
+    .filter((rule) => rule.terms.some((term) => lower.includes(term)) && (!rule.required || rule.required.some((term) => lower.includes(term))))
     .slice(0, limit)
     .map((rule, index) => ({
       id: `${rule.label}-${index}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -105,11 +124,11 @@ function buildCues(text: string, rules: Array<{ terms: string[]; label: string; 
 }
 
 export function recommendSfxCues(text: string) {
-  return buildCues(text, sfxRules, 6);
+  return buildCues(text, sfxRules, 3);
 }
 
 export function recommendAmbienceCues(text: string) {
-  return buildCues(text, ambienceRules, 4);
+  return buildCues(text, ambienceRules, 1);
 }
 
 export function recommendSpeakersForEpisode(text: string) {

@@ -66,25 +66,23 @@ function slug(value) {
 
 function cueTokens(value) {
   const synonyms = {
-    door: ["door", "threshold", "knock", "hinge", "handle", "open", "close"],
-    threshold: ["door", "threshold", "entry", "enter", "exit"],
-    footsteps: ["footstep", "footsteps", "walk", "running", "crawl", "movement"],
-    character: ["human", "cloth", "foley", "movement"],
+    door: ["door", "knock", "hinge", "handle"],
+    knock: ["knock", "door"],
+    footsteps: ["footstep", "footsteps", "steps"],
     vehicle: ["car", "truck", "vehicle", "traffic", "engine"],
-    boxes: ["box", "crate", "luggage", "case", "rummaging"],
+    engine: ["engine", "vehicle", "car", "truck"],
+    boxes: ["box", "crate", "luggage"],
     luggage: ["luggage", "case", "bag", "foley"],
     phone: ["phone", "telephone", "ring"],
-    cloth: ["cloth", "fabric", "foley", "movement"],
-    breath: ["breath", "breathing", "pant", "sigh"],
     weather: ["weather", "rain", "storm", "wind", "thunder"],
+    thunder: ["thunder", "storm"],
+    rain: ["rain", "weather"],
     water: ["water", "wave", "waves", "sea", "ocean", "shore", "harbor"],
-    vessel: ["ship", "boat", "deck", "wood", "creak", "water"],
+    vessel: ["ship", "boat", "deck", "water"],
     bell: ["bell", "bells", "church"],
-    music: ["music", "tonal", "drone"],
-    night: ["night", "ambience", "room", "quiet"],
     room: ["room", "roomtone", "ambience", "interior"],
     urban: ["urban", "city", "street", "traffic", "crowd"],
-    forest: ["forest", "woods", "birds", "wind", "nature"],
+    forest: ["forest", "woods", "birds", "nature"],
     interior: ["interior", "room", "hall", "ambience"],
   };
 
@@ -176,7 +174,7 @@ function scoreSoundItem(item, tokens, preferredKinds) {
     if (!token) continue;
     if (haystack.includes(token)) score += token.length > 5 ? 3 : 2;
   }
-  if (/\b(test|dtmf|white noise|channel test)\b/i.test(haystack)) score -= 8;
+  if (/\b(test|dtmf|white noise|channel test|designed|whoosh|sweep|impact|magic|spell|ghost|horror)\b/i.test(haystack)) score -= 8;
   if (/\b(voice|say|male|female|pirate|yell|scream)\b/i.test(haystack) && !tokens.some((token) => ["human", "breath", "crowd", "laugh", "cry"].includes(token))) score -= 5;
   return score;
 }
@@ -188,7 +186,7 @@ function matchCueToSound(cuePlan, soundIndex, preferredKinds) {
   ]));
   const ranked = soundIndex
     .map((item) => ({ item, score: scoreSoundItem(item, tokens, preferredKinds) }))
-    .filter((entry) => entry.score > 0)
+    .filter((entry) => entry.score >= 8)
     .sort((left, right) => right.score - left.score || left.item.name.localeCompare(right.item.name));
 
   const best = ranked[0]?.item;
@@ -222,11 +220,27 @@ function voiceReferenceBank() {
         : calibrationText,
     },
     byType: {
-      female_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav")
+      orra_voice: existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "orra", "orra.v001.wav")
         || existingFile(localNarratorDir, "voice-auditions", "orra", "orra.v001.wav"),
-      female_voice_2: existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav"),
-      female_voice_3: existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav"),
-      male_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav"),
+      tamsin_voice: existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "tamsin", "tamsin.v001.wav"),
+      ressa_voice: existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "ressa", "ressa.v001.wav"),
+      flint_voice: existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "flint", "flint.v001.wav"),
+      nix_voice: existingFile(localNarratorDir, "voice-approved", "PG2026", "nix", "nix-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "nix", "nix.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "nix", "nix.v001.wav"),
+      female_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "orra", "orra.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "orra", "orra.v001.wav"),
+      female_voice_2: existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "tamsin", "tamsin.v001.wav"),
+      female_voice_3: existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "ressa", "ressa.v001.wav"),
+      male_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "PG2026", "flint", "flint.v001.wav"),
     },
     women: [
       existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav"),
@@ -629,11 +643,11 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
   const soundIndex = loadSoundIndex();
   const approvedSfx = (Array.isArray(scene.sfx_cues) ? scene.sfx_cues : []).filter((cue) => cue.approved).map((cue) => ({ ...cue, kind: "effect" }));
   const approvedAmbience = (Array.isArray(scene.ambience_cues) ? scene.ambience_cues : []).filter((cue) => cue.approved).map((cue) => ({ ...cue, kind: "ambience" }));
-  const approvedCues = [...approvedSfx.slice(0, 12), ...approvedAmbience.slice(0, 4)];
+  const approvedCues = [...approvedSfx.slice(0, 3), ...approvedAmbience.slice(0, 1)];
   const designer = await buildDesignerPlanWithLocalAi({ scene, cues: approvedCues, paths, python });
   const plannedById = new Map((Array.isArray(designer.cue_plan) ? designer.cue_plan : []).map((cuePlan, index) => [String(cuePlan.id || `cue-${index + 1}`), cuePlan]));
 
-  const effects = approvedSfx.slice(0, 12).map((cue, index) => {
+  const effects = approvedSfx.slice(0, 3).map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
     const gainDb = Math.max(Number(cuePlan.gain_db ?? -12), -12);
     return {
@@ -648,11 +662,11 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
       fade_out: Number(cuePlan.fade_out ?? 0.2),
       reason: cuePlan.reason || cue.reason || "",
       avoid: cuePlan.avoid || "Do not distract from narration.",
-      asset: matchCueToSound(cuePlan, soundIndex, ["Foley", "Water", "Weather", "Transportation", "Transitions", "People"]),
+      asset: matchCueToSound(cuePlan, soundIndex, ["Foley", "Water", "Weather", "Transportation"]),
     };
   });
 
-  const ambience = approvedAmbience.slice(0, 4).map((cue, index) => {
+  const ambience = approvedAmbience.slice(0, 1).map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
     const gainDb = Math.min(Math.max(Number(cuePlan.gain_db ?? -26), -30), -22);
     return {

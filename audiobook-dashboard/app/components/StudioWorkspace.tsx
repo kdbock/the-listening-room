@@ -21,18 +21,41 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "render", label: "Render" },
 ];
 
-const speakerVoiceTypes = [
-  { value: "female_voice_1", label: "Female voice 1", detail: "Lower / grounded" },
-  { value: "female_voice_2", label: "Female voice 2", detail: "Clear / direct" },
-  { value: "female_voice_3", label: "Female voice 3", detail: "Warm / expressive" },
-  { value: "male_voice_1", label: "Male voice 1", detail: "Low / weathered" },
-  { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker" },
+const masculineNameHints = ["gregory", "greg", "john", "michael", "david", "daniel", "james", "robert", "william", "the ferryman"];
+const feminineNameHints = ["kimberly", "megan", "meg", "kristy", "sarah", "nix", "orra", "ressa", "tamsin", "lio", "vessa"];
+
+const speakerVoiceTypes: Array<{ value: string; label: string; detail: string; gender: "feminine" | "masculine" | "neutral" }> = [
+  { value: "orra_voice", label: "Orra", detail: "Clear high feminine mezzo", gender: "feminine" },
+  { value: "tamsin_voice", label: "Tamsin", detail: "Warm grounded feminine mezzo", gender: "feminine" },
+  { value: "ressa_voice", label: "Ressa", detail: "Weathered mid-low feminine alto", gender: "feminine" },
+  { value: "flint_voice", label: "Flint", detail: "Very low feminine contralto; not a male voice", gender: "feminine" },
+  { value: "nix_voice", label: "Nix", detail: "Wiry low feminine alto", gender: "feminine" },
+  { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker", gender: "neutral" },
 ];
 
 const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
 
 function voiceTypeLabel(value: string) {
+  if (value === "female_voice_1") return "Orra";
+  if (value === "female_voice_2") return "Tamsin";
+  if (value === "female_voice_3") return "Ressa";
+  if (value === "male_voice_1") return "Flint";
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
+}
+
+function canonicalVoiceValue(value: string) {
+  if (value === "female_voice_1") return "orra_voice";
+  if (value === "female_voice_2") return "tamsin_voice";
+  if (value === "female_voice_3") return "ressa_voice";
+  if (value === "male_voice_1") return "flint_voice";
+  return value;
+}
+
+function voiceCompatibleWithGender(voiceValue: string, gender: StudioSpeaker["gender"]) {
+  const voice = speakerVoiceTypes.find((option) => option.value === canonicalVoiceValue(voiceValue));
+  if (!voiceValue || !voice) return true;
+  if (gender === "masculine") return voice.gender === "masculine" || voice.gender === "neutral";
+  return true;
 }
 
 function speakerColor(speaker: StudioSpeaker, index: number) {
@@ -142,18 +165,59 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return first ? speakers.get(first)?.name || "" : "";
   }
 
+  function inferSpeakerGender(scene: SceneRecord, speakerName: string): StudioSpeaker["gender"] {
+    const lowerName = speakerName.toLowerCase();
+    if (masculineNameHints.some((name) => lowerName.includes(name))) return "masculine";
+    if (feminineNameHints.some((name) => lowerName.includes(name))) return "feminine";
+    const firstName = speakerName.split(/\s+/)[0];
+    if (!firstName || speakerName === "Unassigned") return "unknown";
+    const escapedName = escapeRegExp(firstName);
+    const contextPattern = new RegExp(`(?:\\b(?:he|him|his|she|her|hers)\\b.{0,80}\\b${escapedName}\\b|\\b${escapedName}\\b.{0,80}\\b(?:he|him|his|she|her|hers)\\b)`, "gi");
+    const contexts = Array.from(scene.text.matchAll(contextPattern)).map((match) => match[0].toLowerCase());
+    const masculineHits = contexts.filter((context) => /\b(he|him|his)\b/.test(context)).length;
+    const feminineHits = contexts.filter((context) => /\b(she|her|hers)\b/.test(context)).length;
+    if (masculineHits > feminineHits) return "masculine";
+    if (feminineHits > masculineHits) return "feminine";
+    return "unknown";
+  }
+
+  function bookSpeakerMemory(speakerName: string) {
+    const lowerName = speakerName.toLowerCase();
+    for (const scene of scenes) {
+      const speaker = scene.speakers.find((entry) => entry.name.toLowerCase() === lowerName && entry.approved_voice);
+      if (speaker) {
+        const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
+        return {
+          approved_voice: voiceCompatibleWithGender(speaker.approved_voice, gender) ? canonicalVoiceValue(speaker.approved_voice) : "",
+          gender,
+          color: speaker.color,
+        };
+      }
+    }
+    return null;
+  }
+
+  function voiceOptionsForSpeaker(speaker: StudioSpeaker) {
+    const gender = speaker.gender || "unknown";
+    if (gender === "masculine") {
+      return speakerVoiceTypes.filter((option) => option.gender === "neutral");
+    }
+    return speakerVoiceTypes;
+  }
+
   function nearestKnownSpeaker(scene: SceneRecord, text: string, pronoun?: string) {
     const speakers = scene.speakers.filter((speaker) => speaker.name !== "Unassigned");
     const lowerPronoun = pronoun?.toLowerCase() || "";
     const candidates = speakers
       .filter((speaker) => {
         const name = speaker.name.toLowerCase();
-        const voice = speaker.approved_voice.toLowerCase();
+        const voice = canonicalVoiceValue(speaker.approved_voice).toLowerCase();
+        const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
         if (lowerPronoun === "he" || lowerPronoun === "his") {
-          return voice.includes("male") || ["gregory", "greg", "john", "michael", "david"].some((known) => name.includes(known));
+          return gender === "masculine" || masculineNameHints.some((known) => name.includes(known));
         }
         if (lowerPronoun === "she" || lowerPronoun === "her") {
-          return voice.includes("female") || ["kimberly", "megan", "meg", "kristy", "sarah"].some((known) => name.includes(known));
+          return gender === "feminine" || feminineNameHints.some((known) => name.includes(known)) || voice.includes("voice");
         }
         return true;
       })
@@ -603,12 +667,46 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       setSceneStatus(`Choose a voice type for ${missing.map((speaker) => speaker.name).join(", ")} before approving.`);
       return;
     }
+    const incompatible = activeScene.speakers.filter((speaker) => speaker.name !== "Unassigned" && !voiceCompatibleWithGender(speaker.approved_voice, speaker.gender || inferSpeakerGender(activeScene, speaker.name)));
+    if (incompatible.length) {
+      setSceneStatus(`${incompatible.map((speaker) => speaker.name).join(", ")} needs a compatible voice. No masculine local reference voice is installed yet.`);
+      return;
+    }
     await updateScene({
       ...activeScene,
-      speakers: activeScene.speakers.map((speaker) => ({ ...speaker, status: "approved" })),
+      speakers: activeScene.speakers.map((speaker) => ({ ...speaker, approved_voice: canonicalVoiceValue(speaker.approved_voice), status: "approved" })),
       approvals: { ...activeScene.approvals, voice: true },
       final_mix_status: "voices_approved",
     }, "sfx");
+  }
+
+  async function updateSpeakerVoiceForBook(speakerName: string, voiceValue: string) {
+    if (!activeScene) return;
+    const approvedVoice = canonicalVoiceValue(voiceValue);
+    const lowerName = speakerName.toLowerCase();
+    const nextScenes = scenes.map((scene) => {
+      const hasSpeaker = scene.speakers.some((speaker) => speaker.name.toLowerCase() === lowerName);
+      if (!hasSpeaker) return scene;
+      return {
+        ...scene,
+        speakers: scene.speakers.map((speaker) => {
+          if (speaker.name.toLowerCase() !== lowerName) return speaker;
+          return {
+            ...speaker,
+            approved_voice: approvedVoice,
+            recommended_voice: "",
+            gender: speaker.gender || inferSpeakerGender(scene, speaker.name),
+            status: "recommended" as const,
+          };
+        }),
+        approvals: { ...scene.approvals, voice: true },
+        final_mix_status: scene.final_mix_status === "voices_approved" ? "draft" as const : scene.final_mix_status,
+      };
+    });
+    setScenes(nextScenes);
+    setSceneStatus(`Saved ${speakerName}'s voice for this book.`);
+    const changedScenes = nextScenes.filter((scene, index) => scene !== scenes[index] && !scene.id.startsWith("preview-"));
+    await Promise.all(changedScenes.map((scene) => saveScene(scene)));
   }
 
   async function identifySpeakers() {
@@ -616,7 +714,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     const existingByName = new Map(activeScene.speakers.map((speaker) => [speaker.name.toLowerCase(), speaker]));
     const detectedSpeakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => ({
       ...speaker,
-      approved_voice: existingByName.get(speaker.name.toLowerCase())?.approved_voice || "",
+      gender: existingByName.get(speaker.name.toLowerCase())?.gender || speaker.gender || inferSpeakerGender(activeScene, speaker.name),
+      approved_voice: canonicalVoiceValue(existingByName.get(speaker.name.toLowerCase())?.approved_voice || bookSpeakerMemory(speaker.name)?.approved_voice || ""),
       color: existingByName.get(speaker.name.toLowerCase())?.color || speaker.color || speakerColors[index % speakerColors.length],
     }));
     const speakers = [
@@ -651,7 +750,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       name,
       line_count: 0,
       recommended_voice: "",
-      approved_voice: "",
+      approved_voice: bookSpeakerMemory(name)?.approved_voice || "",
+      gender: inferSpeakerGender(activeScene, name),
       color: speakerColors[activeScene.speakers.length % speakerColors.length],
       status: "recommended",
     };
@@ -1232,35 +1332,39 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         <div className="studio-row speaker-pick-row" key={`${speaker.name}-${index}`} onClick={() => assignSelectedTextToSpeaker(speaker.name)}>
                           <div>
                             <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
-                            <small>{speaker.line_count} lines · {voiceTypeLabel(speaker.approved_voice)} · click card to assign selected text</small>
+                            <small>
+                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to assign selected text
+                              {speaker.gender === "masculine" ? " · no masculine local voice installed yet" : ""}
+                            </small>
                           </div>
                           <div className="studio-list">
                             <select
                               aria-label={`Voice type for ${speaker.name}`}
-                              value={speaker.approved_voice}
+                              value={canonicalVoiceValue(speaker.approved_voice)}
                               onChange={(event) => {
                                 event.stopPropagation();
-                                const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, recommended_voice: "", status: "recommended" as const } : entry);
-                                setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
+                                updateSpeakerVoiceForBook(speaker.name, event.target.value);
                               }}
                               onClick={(event) => event.stopPropagation()}
                             >
                               <option value="">Choose voice type…</option>
-                              {speakerVoiceTypes.map((option) => (
+                              {voiceOptionsForSpeaker(speaker).map((option) => (
                                 <option key={`${speaker.name}-${option.value}`} value={option.value}>
                                   {option.label} — {option.detail}
                                 </option>
                               ))}
                             </select>
+                            {speaker.gender === "masculine" && (
+                              <small className="studio-warning">No masculine reference voice is installed. Add a masculine approved voice WAV before final casting this character.</small>
+                            )}
                             <div className="actions">
-                              {speakerVoiceTypes.map((option) => (
+                              {voiceOptionsForSpeaker(speaker).map((option) => (
                                 <button
                                   key={`${speaker.name}-${option.value}`}
-                                  className={`button ghost ${speaker.approved_voice === option.value ? "selected" : ""}`}
+                                  className={`button ghost ${canonicalVoiceValue(speaker.approved_voice) === option.value ? "selected" : ""}`}
                                   onClick={(event) => {
                                     event.stopPropagation();
-                                    const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: option.value, recommended_voice: "", status: "recommended" as const } : entry);
-                                    setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
+                                    updateSpeakerVoiceForBook(speaker.name, option.value);
                                   }}
                                 >
                                   {option.label}
