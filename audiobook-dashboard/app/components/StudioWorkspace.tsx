@@ -43,6 +43,10 @@ function stripDialogueQuotes(value: string) {
   return value.trim().replace(/^[“”"]+/, "").replace(/[“”"]+$/, "").trim();
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function isLikelyManuscript(material: MaterialRecord) {
   const lowerName = material.name.toLowerCase();
   return material.category === "Manuscript"
@@ -162,6 +166,48 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return candidates[0]?.speaker.name || "";
   }
 
+  function uniqueSpeakerMention(scene: SceneRecord, context: string) {
+    const matches = scene.speakers
+      .filter((speaker) => speaker.name !== "Unassigned")
+      .filter((speaker) => {
+        const aliases = Array.from(new Set([
+          speaker.name.trim(),
+          speaker.name.trim().split(/\s+/)[0],
+        ].filter(Boolean)));
+        return aliases.some((alias) => new RegExp(`\\b${escapeRegExp(alias)}\\b`, "i").test(context));
+      });
+    return matches.length === 1 ? matches[0].name : "";
+  }
+
+  function paragraphContextSpeaker(scene: SceneRecord, quoteStart: number, quoteEnd: number) {
+    const text = scene.text;
+    const beforeText = text.slice(0, quoteStart);
+    const afterText = text.slice(quoteEnd);
+    const beforeBreaks = Array.from(beforeText.matchAll(/\n\s*\n/g));
+    const paragraphStartBreak = beforeBreaks[beforeBreaks.length - 1];
+    const paragraphStart = paragraphStartBreak?.index !== undefined
+      ? paragraphStartBreak.index + paragraphStartBreak[0].length
+      : 0;
+    const paragraphEndMatch = afterText.match(/\n\s*\n/);
+    const paragraphEnd = paragraphEndMatch?.index !== undefined
+      ? quoteEnd + paragraphEndMatch.index
+      : text.length;
+    const previousText = text.slice(0, paragraphStart).trimEnd();
+    const previousBreaks = Array.from(previousText.matchAll(/\n\s*\n/g));
+    const previousBreak = previousBreaks[previousBreaks.length - 1];
+    const previousParagraph = previousBreak?.index !== undefined ? previousText.slice(previousBreak.index + previousBreak[0].length).trim() : previousText;
+    const nextText = text.slice(paragraphEnd).trimStart();
+    const nextBreak = nextText.search(/\n\s*\n/);
+    const nextParagraph = nextBreak >= 0 ? nextText.slice(0, nextBreak).trim() : nextText;
+    const currentBefore = text.slice(paragraphStart, quoteStart);
+    const currentAfter = text.slice(quoteEnd, paragraphEnd);
+
+    return uniqueSpeakerMention(scene, currentBefore)
+      || uniqueSpeakerMention(scene, currentAfter)
+      || uniqueSpeakerMention(scene, previousParagraph)
+      || uniqueSpeakerMention(scene, nextParagraph);
+  }
+
   function inferQuoteSpeaker(scene: SceneRecord, quoteStart: number, quoteEnd: number) {
     const text = scene.text;
     const before = text.slice(Math.max(0, quoteStart - 140), quoteStart);
@@ -178,6 +224,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (afterPronounVerb) return nearestKnownSpeaker(scene, before, afterPronounVerb[1]);
     const beforePronounVerb = new RegExp(`\\b(he|she)\\s+(?:${verbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
     if (beforePronounVerb) return nearestKnownSpeaker(scene, before, beforePronounVerb[1]);
+    const contextSpeaker = paragraphContextSpeaker(scene, quoteStart, quoteEnd);
+    if (contextSpeaker) return contextSpeaker;
     return "";
   }
 
