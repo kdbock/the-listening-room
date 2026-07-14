@@ -74,6 +74,17 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   async function buildScenes(text: string, sourceName?: string) {
     if (!book || !text.trim()) return;
     const built = buildScenesFromManuscript(book.id, text);
+    const previewScenes: SceneRecord[] = built.map((scene, index) => ({
+      id: `preview-${index + 1}`,
+      ...scene,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+    setScenes(previewScenes);
+    setActiveSceneId(previewScenes[0]?.id || "");
+    setManuscriptText(text);
+    if (sourceName) setManuscriptSourceName(sourceName);
+    setTab("text");
     await replaceScenes(book.id, built);
     await saveBook({
       ...book,
@@ -83,10 +94,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       notes: `MANUSCRIPT::${text}`,
       next_action: "Review scene text and approve the first voice recommendations.",
     });
-    if (sourceName) setManuscriptSourceName(sourceName);
-    setManuscriptText(text);
     await loadWorkspace();
-    setTab("text");
   }
 
   async function loadWorkspace() {
