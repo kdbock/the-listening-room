@@ -150,3 +150,8 @@ export async function saveScene(scene: SceneRecord) {
     updated_at: nowIso(),
   });
 }
+
+export async function deleteScene(sceneId: string) {
+  const db = getClientFirestore();
+  await deleteDoc(doc(db, firestoreCollections.scenes, sceneId));
+}

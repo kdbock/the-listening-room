@@ -5,9 +5,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
-import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
+import { deleteRenderJob, getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript, recommendAmbienceCues, recommendSfxCues, recommendSpeakersForEpisode } from "@/lib/studio/workflow";
-import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
+import { deleteScene, listScenes, replaceScenes, saveScene, type SceneRecord, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
 import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
@@ -386,6 +386,81 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     }
   }
 
+  async function deleteActiveEpisode() {
+    if (!activeScene || activeScene.id.startsWith("preview-")) return;
+    const confirmed = window.confirm(`Delete episode ${activeScene.scene_order}: "${activeScene.title}"? This removes the episode from the app, but it does not delete local WAV files on your Mac.`);
+    if (!confirmed) return;
+    const remaining = scenes.filter((scene) => scene.id !== activeScene.id);
+    setSavingSceneId(activeScene.id);
+    try {
+      await deleteScene(activeScene.id);
+      if (renderJob?.id) await deleteRenderJob(renderJob.id).catch(() => undefined);
+      setScenes(remaining);
+      setActiveSceneId(remaining[0]?.id || "");
+      setTab("script");
+      setRenderJob(null);
+      setRenderArtifactUrl("");
+      setSceneStatus("Episode deleted.");
+    } catch (err) {
+      setSceneStatus(err instanceof Error ? err.message : "Could not delete this episode.");
+    } finally {
+      setSavingSceneId("");
+    }
+  }
+
+  async function resetActiveDraft() {
+    if (!activeScene) return;
+    const confirmed = window.confirm(`Reset draft approvals and production choices for "${activeScene.title}"? The episode text stays.`);
+    if (!confirmed) return;
+    await updateScene({
+      ...activeScene,
+      speakers: [],
+      dialogue_assignments: [],
+      sfx_cues: [],
+      ambience_cues: [],
+      voice_notes: "",
+      approvals: { script: false, voice: false, draft: false, sfx: false, music: false },
+      final_mix_status: "draft",
+    }, "script");
+    setSelectedSpeakerName("");
+    setSelectedDialogueText("");
+    setManualSpeakerName("");
+    setSceneStatus("Draft reset. Episode text was kept.");
+  }
+
+  async function clearActiveRender() {
+    if (!activeScene) return;
+    const confirmed = window.confirm(`Clear render records for "${activeScene.title}"? This removes the app's render result reference. It does not delete local WAV files on your Mac.`);
+    if (!confirmed) return;
+    if (renderJob?.id) await deleteRenderJob(renderJob.id).catch(() => undefined);
+    await updateScene({
+      ...activeScene,
+      render_job_status: "",
+      render_output_path: "",
+      render_sound_design_plan_path: "",
+      render_sound_design_plan: {
+        created_at: "",
+        status: "",
+        planner: "",
+        scene_summary: "",
+        tone: "",
+        sound_strategy: "",
+        plan_path: "",
+        final_mix: "",
+        with_sfx_mix: "",
+        effects_stem: "",
+        ambience_stem: "",
+        items: [],
+        unmatched: [],
+      },
+      render_error_message: "",
+      final_mix_status: activeScene.approvals?.music ? "ambience_approved" : activeScene.final_mix_status === "ready_to_render" ? "ambience_approved" : activeScene.final_mix_status,
+    }, "render");
+    setRenderJob(null);
+    setRenderArtifactUrl("");
+    setSceneStatus("Render cleared from the app. Local files on the Mac were left alone.");
+  }
+
   async function approveNarratorStage() {
     if (!activeScene) return;
     await updateScene({
@@ -727,7 +802,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <p className="eyebrow">Episode {activeScene.scene_order}</p>
                     <h2>{activeScene.title}</h2>
                   </div>
-                  <span className="studio-status">{activeScene.final_mix_status.replaceAll("_", " ")}</span>
+                  <div className="episode-header-actions">
+                    <span className="studio-status">{activeScene.final_mix_status.replaceAll("_", " ")}</span>
+                    <button className="button ghost danger" disabled={savingSceneId === activeScene.id} onClick={resetActiveDraft}>Reset draft</button>
+                    <button className="button ghost danger" disabled={savingSceneId === activeScene.id} onClick={deleteActiveEpisode}>Delete episode</button>
+                  </div>
                 </div>
 
                 {tab === "script" && (
@@ -1072,6 +1151,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     </details>
                     <div className="actions">
                       <button className="button primary" onClick={markReadyToRender}>Render this episode</button>
+                      <button className="button ghost danger" onClick={clearActiveRender}>Clear render</button>
                     </div>
                     {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>

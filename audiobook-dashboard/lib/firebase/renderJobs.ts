@@ -1,6 +1,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   query,
@@ -129,4 +130,9 @@ export async function updateRenderJob(job: RenderJobRecord) {
     ...job,
     updated_at: nowIso(),
   });
+}
+
+export async function deleteRenderJob(jobId: string) {
+  const db = getClientFirestore();
+  await deleteDoc(doc(db, firestoreCollections.renderJobs, jobId));
 }
