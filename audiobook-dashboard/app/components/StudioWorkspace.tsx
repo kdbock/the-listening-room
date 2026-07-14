@@ -295,6 +295,18 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     } as SceneRecord);
   }
 
+  async function approveStageWithoutToggling(kind: "sfx" | "music") {
+    if (!activeScene) return;
+    await updateScene({
+      ...activeScene,
+      approvals: {
+        ...activeScene.approvals,
+        ...(kind === "sfx" ? { sfx: true } : { music: true }),
+      },
+      final_mix_status: kind === "sfx" ? "sfx_approved" : "ambience_approved",
+    }, kind === "sfx" ? "music" : "compare");
+  }
+
   const [sfxDraft, setSfxDraft] = useState({ time: "", label: "", source: "", license: "" });
   const [musicDraft, setMusicDraft] = useState({ time: "", label: "", source: "", license: "" });
 
@@ -510,6 +522,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     </div>
                     <div className="actions">
                       <button className="button" onClick={async () => { await saveCue("sfx_cues", sfxDraft); setSfxDraft({ time: "", label: "", source: "", license: "" }); }}>Add sound cue</button>
+                      <button className="button primary" onClick={() => approveStageWithoutToggling("sfx")}>Approve sound effects and continue</button>
                     </div>
                   </>
                 )}
@@ -533,6 +546,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     </div>
                     <div className="actions">
                       <button className="button" onClick={async () => { await saveCue("ambience_cues", musicDraft); setMusicDraft({ time: "", label: "", source: "", license: "" }); }}>Add music cue</button>
+                      <button className="button primary" onClick={() => approveStageWithoutToggling("music")}>Approve music and continue</button>
                     </div>
                   </>
                 )}
