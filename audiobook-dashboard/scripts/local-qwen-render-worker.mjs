@@ -285,7 +285,7 @@ function inferQuoteSpeaker({ before, after, speakerByName }) {
   return "";
 }
 
-function buildNarrationUnits({ text, speakers, bank }) {
+function buildNarrationUnits({ text, speakers, assignments, bank }) {
   const approvedSpeakers = (Array.isArray(speakers) ? speakers : [])
     .filter((speaker) => speaker.name && speaker.name !== "Unassigned")
     .map((speaker) => ({
@@ -293,50 +293,80 @@ function buildNarrationUnits({ text, speakers, bank }) {
       reference: pickSpeakerReference(speaker, bank),
     }));
   const speakerByName = new Map(approvedSpeakers.map((speaker) => [String(speaker.name).toLowerCase(), speaker]));
+  const manualAssignments = (Array.isArray(assignments) ? assignments : [])
+    .filter((assignment) => assignment.speaker && assignment.text)
+    .map((assignment) => ({
+      speaker: String(assignment.speaker),
+      text: String(assignment.text).trim(),
+    }));
   const fallbackDialogueSpeaker = approvedSpeakers.length === 1 ? approvedSpeakers[0] : null;
   const quotePattern = /[“"]([^”"]+)[”"]/g;
-  const units = [];
-  let cursor = 0;
+  const ranges = [];
   let quoteIndex = 0;
 
-  for (const match of text.matchAll(quotePattern)) {
-    const narration = text.slice(cursor, match.index).trim();
-    if (narration) {
-      units.push({
-        text: narration,
-        speaker: "Narrator",
-        reference_audio: bank.narrator.audio,
-        reference_text: bank.narrator.text,
-      });
-    }
+  function referenceForSpeaker(speakerName) {
+    return speakerByName.get(String(speakerName || "").toLowerCase()) || null;
+  }
 
-    const before = text.slice(Math.max(0, match.index - 140), match.index);
-    const after = text.slice(match.index + match[0].length, match.index + match[0].length + 140);
-    const speakerName = inferQuoteSpeaker({ before, after, speakerByName });
+  for (const assignment of manualAssignments) {
+    let start = text.indexOf(assignment.text);
+    while (start >= 0) {
+      const speaker = referenceForSpeaker(assignment.speaker);
+      if (speaker) {
+        ranges.push({
+          start,
+          end: start + assignment.text.length,
+          text: assignment.text,
+          speaker,
+        });
+      }
+      start = text.indexOf(assignment.text, start + assignment.text.length);
+    }
+  }
+
+  for (const match of text.matchAll(quotePattern)) {
+    const start = match.index || 0;
+    const end = start + match[0].length;
+    if (ranges.some((range) => start < range.end && end > range.start)) continue;
+
+    const before = text.slice(Math.max(0, start - 140), start);
+    const after = text.slice(end, end + 140);
+    const manualSpeaker = manualAssignments.find((assignment) => match[1].trim() === assignment.text || match[1].includes(assignment.text) || assignment.text.includes(match[1].trim()))?.speaker || "";
+    const speakerName = manualSpeaker || inferQuoteSpeaker({ before, after, speakerByName });
     const speaker = (speakerName && speakerByName.get(speakerName.toLowerCase()))
       || fallbackDialogueSpeaker
       || approvedSpeakers[quoteIndex % Math.max(approvedSpeakers.length, 1)]
       || null;
 
-    units.push({
-      text: match[1].trim(),
-      speaker: speaker?.name || "Narrator",
-      reference_audio: speaker?.reference.audio || bank.narrator.audio,
-      reference_text: speaker?.reference.text || bank.narrator.text,
-    });
+    if (speaker) ranges.push({ start, end, text: match[1].trim(), speaker });
     quoteIndex += 1;
-    cursor = match.index + match[0].length;
+  }
+
+  ranges.sort((left, right) => left.start - right.start || right.end - left.end);
+  const nonOverlapping = [];
+  for (const range of ranges) {
+    if (nonOverlapping.some((entry) => range.start < entry.end && range.end > entry.start)) continue;
+    nonOverlapping.push(range);
+  }
+
+  const units = [];
+  let cursor = 0;
+  for (const range of nonOverlapping) {
+    const narration = text.slice(cursor, range.start).trim();
+    if (narration) {
+      units.push({ text: narration, speaker: "Narrator", reference_audio: bank.narrator.audio, reference_text: bank.narrator.text });
+    }
+    units.push({
+      text: range.text,
+      speaker: range.speaker.name,
+      reference_audio: range.speaker.reference.audio,
+      reference_text: range.speaker.reference.text,
+    });
+    cursor = range.end;
   }
 
   const tail = text.slice(cursor).trim();
-  if (tail) {
-    units.push({
-      text: tail,
-      speaker: "Narrator",
-      reference_audio: bank.narrator.audio,
-      reference_text: bank.narrator.text,
-    });
-  }
+  if (tail) units.push({ text: tail, speaker: "Narrator", reference_audio: bank.narrator.audio, reference_text: bank.narrator.text });
 
   if (!units.length) {
     units.push({
@@ -566,7 +596,7 @@ function buildNarratorPlan({ job, scene, book }) {
     render_target: "local_qwen",
     book: { id: book.id, title: book.title || "" },
     scene: { id: scene.id, title: scene.title || "", scene_order: scene.scene_order || 0 },
-    units: buildNarrationUnits({ text, speakers: scene.speakers, bank }),
+    units: buildNarrationUnits({ text, speakers: scene.speakers, assignments: scene.dialogue_assignments, bank }),
   });
 
   return { outputRoot, sourcePath, planPath, outputPath, segmentsDir, soundPlanPath, effectsStemPath, ambienceStemPath, withSfxPath, finalMixPath };

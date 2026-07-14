@@ -1,5 +1,7 @@
 import type { SceneRecord, StudioCue, StudioSpeaker } from "@/lib/firebase/scenes";
 
+const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
+
 const sfxRules: Array<{ terms: string[]; label: string; reason: string }> = [
   { terms: ["door", "knock", "entered", "emerged", "left", "leaving"], label: "Door and threshold movement", reason: "A character enters, exits, or crosses a threshold here." },
   { terms: ["footstep", "walk", "paced", "crossed", "stairs", "towards"], label: "Character footsteps", reason: "Physical movement can give this beat shape without overpowering the narration." },
@@ -69,11 +71,12 @@ function extractSpeakers(text: string): StudioSpeaker[] {
     counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
   }
 
-  return Array.from(counts.entries()).map(([name, line_count]) => ({
+  return Array.from(counts.entries()).map(([name, line_count], index) => ({
     name,
     line_count,
     recommended_voice: "",
     approved_voice: "",
+    color: speakerColors[index % speakerColors.length],
     status: "recommended",
   }));
 }

@@ -7,7 +7,7 @@ import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript, recommendAmbienceCues, recommendSfxCues, recommendSpeakersForEpisode } from "@/lib/studio/workflow";
-import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
+import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
 import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
@@ -29,8 +29,14 @@ const speakerVoiceTypes = [
   { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker" },
 ];
 
+const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
+
 function voiceTypeLabel(value: string) {
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
+}
+
+function speakerColor(speaker: StudioSpeaker, index: number) {
+  return speaker.color || speakerColors[index % speakerColors.length];
 }
 
 function isLikelyManuscript(material: MaterialRecord) {
@@ -64,6 +70,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manuscriptText, setManuscriptText] = useState("");
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
   const [manuscriptSourceHint, setManuscriptSourceHint] = useState("");
+  const [manualSpeakerName, setManualSpeakerName] = useState("");
+  const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
+  const [selectedDialogueText, setSelectedDialogueText] = useState("");
   const attemptedAutoImport = useRef(false);
 
   function approval(scene: SceneRecord | null, key: "script" | "voice" | "draft" | "sfx" | "music") {
@@ -107,6 +116,84 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (key === "sfx") return approval(scene, "sfx") ? "Approved" : speakersApproved(scene) ? "Current" : "Locked";
     if (key === "music") return approval(scene, "music") ? "Approved" : approval(scene, "sfx") ? "Current" : "Locked";
     return approval(scene, "music") ? "Ready" : "Locked";
+  }
+
+  function speakerByName(scene: SceneRecord) {
+    return new Map(scene.speakers.map((speaker, index) => [
+      speaker.name.toLowerCase(),
+      { ...speaker, color: speakerColor(speaker, index) },
+    ]));
+  }
+
+  function knownSpeaker(scene: SceneRecord, rawName: string) {
+    const speakers = speakerByName(scene);
+    const direct = speakers.get(rawName.trim().toLowerCase());
+    if (direct) return direct.name;
+    const first = rawName.trim().split(/\s+/)[0]?.toLowerCase();
+    return first ? speakers.get(first)?.name || "" : "";
+  }
+
+  function inferQuoteSpeaker(scene: SceneRecord, quoteStart: number, quoteEnd: number) {
+    const text = scene.text;
+    const before = text.slice(Math.max(0, quoteStart - 140), quoteStart);
+    const after = text.slice(quoteEnd, quoteEnd + 140);
+    const namePattern = "([A-Z][a-zA-Z'’-]+(?:\\s+[A-Z][a-zA-Z'’-]+)?)";
+    const verbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered";
+    const afterVerbName = new RegExp(`^\\s*[,.!?—–-]*\\s*(?:${verbs})\\s+${namePattern}\\b`, "i").exec(after);
+    if (afterVerbName) return knownSpeaker(scene, afterVerbName[1]);
+    const afterNameVerb = new RegExp(`^\\s*[,.!?—–-]*\\s*${namePattern}\\s+(?:${verbs})\\b`, "i").exec(after);
+    if (afterNameVerb) return knownSpeaker(scene, afterNameVerb[1]);
+    const beforeNameVerb = new RegExp(`${namePattern}\\s+(?:${verbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
+    if (beforeNameVerb) return knownSpeaker(scene, beforeNameVerb[1]);
+    return "";
+  }
+
+  function highlightedDialogueSegments(scene: SceneRecord) {
+    const text = scene.text;
+    const speakers = speakerByName(scene);
+    const assignments = scene.dialogue_assignments ?? [];
+    const ranges: Array<{ start: number; end: number; speaker: string; color: string; missed?: boolean }> = [];
+
+    for (const assignment of assignments) {
+      if (!assignment.text.trim()) continue;
+      let start = text.indexOf(assignment.text);
+      while (start >= 0) {
+        ranges.push({ start, end: start + assignment.text.length, speaker: assignment.speaker, color: assignment.color });
+        start = text.indexOf(assignment.text, start + assignment.text.length);
+      }
+    }
+
+    for (const match of text.matchAll(/[“"]([^”"]+)[”"]/g)) {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      if (ranges.some((range) => start < range.end && end > range.start)) continue;
+      const speakerName = inferQuoteSpeaker(scene, start, end);
+      const speaker = speakerName ? speakers.get(speakerName.toLowerCase()) : null;
+      ranges.push({
+        start,
+        end,
+        speaker: speaker?.name || "Unassigned",
+        color: speaker?.color || "#fff3bd",
+        missed: !speaker,
+      });
+    }
+
+    ranges.sort((left, right) => left.start - right.start || right.end - left.end);
+    const nonOverlapping: typeof ranges = [];
+    for (const range of ranges) {
+      if (nonOverlapping.some((entry) => range.start < entry.end && range.end > entry.start)) continue;
+      nonOverlapping.push(range);
+    }
+
+    const segments: Array<{ text: string; speaker?: string; color?: string; missed?: boolean }> = [];
+    let cursor = 0;
+    for (const range of nonOverlapping) {
+      if (range.start > cursor) segments.push({ text: text.slice(cursor, range.start) });
+      segments.push({ text: text.slice(range.start, range.end), speaker: range.speaker, color: range.color, missed: range.missed });
+      cursor = range.end;
+    }
+    if (cursor < text.length) segments.push({ text: text.slice(cursor) });
+    return segments;
   }
 
   async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
@@ -324,7 +411,12 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function identifySpeakers() {
     if (!activeScene) return;
-    const speakers = recommendSpeakersForEpisode(activeScene.text);
+    const existingByName = new Map(activeScene.speakers.map((speaker) => [speaker.name.toLowerCase(), speaker]));
+    const speakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => ({
+      ...speaker,
+      approved_voice: existingByName.get(speaker.name.toLowerCase())?.approved_voice || "",
+      color: existingByName.get(speaker.name.toLowerCase())?.color || speaker.color || speakerColors[index % speakerColors.length],
+    }));
     await updateScene({
       ...activeScene,
       speakers,
@@ -334,6 +426,70 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSceneStatus(speakers.length
       ? `Identified ${speakers.length} likely speaker${speakers.length === 1 ? "" : "s"} for this episode.`
       : "No named speakers were found in this episode. You can still approve narration and continue.");
+  }
+
+  async function addManualSpeaker() {
+    if (!activeScene || !manualSpeakerName.trim()) return;
+    const name = manualSpeakerName.trim();
+    if (activeScene.speakers.some((speaker) => speaker.name.toLowerCase() === name.toLowerCase())) {
+      setSceneStatus(`${name} is already in the speaker list.`);
+      return;
+    }
+    const nextSpeaker: StudioSpeaker = {
+      name,
+      line_count: 0,
+      recommended_voice: "",
+      approved_voice: "",
+      color: speakerColors[activeScene.speakers.length % speakerColors.length],
+      status: "recommended",
+    };
+    await updateScene({
+      ...activeScene,
+      speakers: [...activeScene.speakers, nextSpeaker],
+      approvals: { ...activeScene.approvals, voice: true },
+      final_mix_status: "draft",
+    });
+    setManualSpeakerName("");
+    setSelectedSpeakerName(name);
+    setSceneStatus(`Added ${name}. Select their text below and assign it.`);
+  }
+
+  function captureSelectedDialogueText() {
+    const selected = window.getSelection()?.toString().trim() || "";
+    if (selected) setSelectedDialogueText(selected);
+  }
+
+  async function assignSelectedTextToSpeaker() {
+    if (!activeScene || !selectedSpeakerName || !selectedDialogueText.trim()) return;
+    const speaker = activeScene.speakers.find((entry) => entry.name === selectedSpeakerName);
+    if (!speaker) return;
+    const color = speaker.color || speakerColors[activeScene.speakers.findIndex((entry) => entry.name === speaker.name) % speakerColors.length];
+    const assignment: StudioDialogueAssignment = {
+      id: `dialogue-${Date.now()}`,
+      speaker: speaker.name,
+      text: selectedDialogueText.trim(),
+      color,
+    };
+    const existingAssignments = activeScene.dialogue_assignments ?? [];
+    await updateScene({
+      ...activeScene,
+      dialogue_assignments: [...existingAssignments.filter((entry) => !(entry.speaker === assignment.speaker && entry.text === assignment.text)), assignment],
+      speakers: activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, line_count: entry.line_count + 1, color } : entry),
+      approvals: { ...activeScene.approvals, voice: true },
+      final_mix_status: "draft",
+    });
+    setSelectedDialogueText("");
+    window.getSelection()?.removeAllRanges();
+    setSceneStatus(`Assigned selected text to ${speaker.name}.`);
+  }
+
+  async function removeDialogueAssignment(assignmentId: string) {
+    if (!activeScene) return;
+    await updateScene({
+      ...activeScene,
+      dialogue_assignments: (activeScene.dialogue_assignments ?? []).filter((assignment) => assignment.id !== assignmentId),
+      final_mix_status: "draft",
+    });
   }
 
   async function toggleCue(kind: "sfx_cues" | "ambience_cues", cueId: string) {
@@ -623,11 +779,88 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <div className="actions">
                       <button className="button" onClick={identifySpeakers}>Identify speakers in this episode</button>
                     </div>
+                    <div className="speaker-review-layout">
+                      <div className="speaker-text-card">
+                        <div className="speaker-text-head">
+                          <div>
+                            <strong>Episode text</strong>
+                            <small>Select missed dialogue, choose a speaker, then assign it.</small>
+                          </div>
+                          <button className="button ghost" onClick={captureSelectedDialogueText}>Use selected text</button>
+                        </div>
+                        <div className="speaker-highlight-text" onMouseUp={captureSelectedDialogueText}>
+                          {highlightedDialogueSegments(activeScene).map((segment, index) => (
+                            segment.speaker ? (
+                              <mark
+                                key={`${segment.speaker}-${index}`}
+                                className={`speaker-mark ${segment.missed ? "missed" : ""}`}
+                                style={{ backgroundColor: segment.color }}
+                                title={`${segment.speaker}${segment.missed ? " — needs assignment" : ""}`}
+                              >
+                                {segment.text}
+                              </mark>
+                            ) : (
+                              <span key={`plain-${index}`}>{segment.text}</span>
+                            )
+                          ))}
+                        </div>
+                        <div className="speaker-assignment-tools">
+                          <label>
+                            Assign selected text to
+                            <select value={selectedSpeakerName} onChange={(event) => setSelectedSpeakerName(event.target.value)}>
+                              <option value="">Choose speaker…</option>
+                              {activeScene.speakers.map((speaker) => (
+                                <option key={`assign-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Selected text
+                            <textarea
+                              value={selectedDialogueText}
+                              onChange={(event) => setSelectedDialogueText(event.target.value)}
+                              placeholder="Select dialogue above, or paste missed text here."
+                            />
+                          </label>
+                          <button className="button primary" disabled={!selectedSpeakerName || !selectedDialogueText.trim()} onClick={assignSelectedTextToSpeaker}>
+                            Assign text
+                          </button>
+                        </div>
+                      </div>
+                      <div className="speaker-side-card">
+                        <strong>Add missed speaker</strong>
+                        <div className="actions">
+                          <input value={manualSpeakerName} onChange={(event) => setManualSpeakerName(event.target.value)} placeholder="Speaker name" />
+                          <button className="button" onClick={addManualSpeaker}>Add speaker</button>
+                        </div>
+                        <div className="speaker-legend">
+                          {activeScene.speakers.map((speaker, index) => (
+                            <span key={`legend-${speaker.name}`}>
+                              <i style={{ backgroundColor: speakerColor(speaker, index) }} />
+                              {speaker.name}
+                            </span>
+                          ))}
+                          <span><i className="missed-swatch" /> Unassigned quote</span>
+                        </div>
+                        {(activeScene.dialogue_assignments ?? []).length > 0 && (
+                          <div className="manual-assignment-list">
+                            <strong>Manual assignments</strong>
+                            {(activeScene.dialogue_assignments ?? []).map((assignment) => (
+                              <div key={assignment.id} className="manual-assignment">
+                                <span><i style={{ backgroundColor: assignment.color }} />{assignment.speaker}</span>
+                                <small>{assignment.text}</small>
+                                <button className="button ghost" onClick={() => removeDialogueAssignment(assignment.id)}>Remove</button>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                     <div className="studio-list">
                       {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
                         <div className="studio-row" key={`${speaker.name}-${index}`}>
                           <div>
-                            <strong>{speaker.name}</strong>
+                            <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
                             <small>{speaker.line_count} lines · {voiceTypeLabel(speaker.approved_voice)}</small>
                           </div>
                           <div className="studio-list">

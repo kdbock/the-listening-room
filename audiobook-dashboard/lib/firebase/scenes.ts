@@ -16,7 +16,15 @@ export type StudioSpeaker = {
   line_count: number;
   recommended_voice: string;
   approved_voice: string;
+  color?: string;
   status: "recommended" | "approved" | "rejected";
+};
+
+export type StudioDialogueAssignment = {
+  id: string;
+  speaker: string;
+  text: string;
+  color: string;
 };
 
 export type StudioCue = {
@@ -68,6 +76,7 @@ export type SceneRecord = {
   text: string;
   estimated_minutes: number;
   speakers: StudioSpeaker[];
+  dialogue_assignments?: StudioDialogueAssignment[];
   sfx_cues: StudioCue[];
   ambience_cues: StudioCue[];
   final_mix_status: "draft" | "voices_approved" | "sfx_approved" | "ambience_approved" | "ready_to_render";
