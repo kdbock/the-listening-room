@@ -23,7 +23,15 @@ body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--fo
 .scene-pill strong { font-size:13px; }
 .scene-pill small { margin-top:4px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; }
 .studio-tabs { margin-bottom:16px; }
+.studio-tabs button:disabled { opacity:.4; cursor:not-allowed; }
 .studio-scene-card { min-height:540px; }
+.episode-step-rail { display:grid; grid-template-columns:repeat(6,minmax(0,1fr)); gap:8px; margin-bottom:22px; }
+.episode-step { text-align:left; border:1px solid var(--line); border-radius:10px; background:#fff; padding:12px; cursor:pointer; }
+.episode-step.active { border-color:var(--forest); background:#f8f4ea; }
+.episode-step.locked { opacity:.48; cursor:not-allowed; }
+.episode-step span,.episode-step strong { display:block; }
+.episode-step span { color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.12em; }
+.episode-step strong { margin-top:6px; color:var(--forest); font-size:13px; }
 .studio-scene-head { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; margin-bottom:16px; }
 .studio-status { border:1px solid var(--line); border-radius:20px; padding:8px 12px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.1em; }
 .studio-list { display:grid; gap:10px; margin-top:16px; }
@@ -39,6 +47,10 @@ body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--fo
 .studio-render-card small { margin-top:6px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; font-size:10px; }
 .render-audio-result audio { display:block; width:100%; margin:14px 0; }
 .render-audio-result { margin-top:12px; }
+.studio-details { margin-top:16px; border:1px solid var(--line); border-radius:10px; background:#fff; padding:14px; }
+.studio-details summary { cursor:pointer; color:var(--forest); font-size:12px; font-weight:700; }
+.studio-details .studio-manuscript { margin-top:14px; }
+.advanced-render-details { background:#f8f4ea; }
 .sound-plan-review { display:grid; gap:12px; }
 .sound-plan-list { display:grid; gap:10px; }
 .sound-plan-item { display:grid; grid-template-columns:minmax(180px,.65fr) minmax(0,1fr); gap:14px; padding:12px 0; border-top:1px solid var(--line); }

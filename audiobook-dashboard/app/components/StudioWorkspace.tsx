@@ -6,19 +6,19 @@ import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
-import { buildScenesFromManuscript, recommendSfxCues } from "@/lib/studio/workflow";
+import { buildScenesFromManuscript, recommendAmbienceCues, recommendSfxCues, recommendSpeakersForEpisode } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
 import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
 
 const tabs: Array<{ key: TabKey; label: string }> = [
-  { key: "script", label: "1 · Text" },
-  { key: "voice", label: "2 · Narration" },
-  { key: "characters", label: "3 · Characters" },
-  { key: "sfx", label: "4 · Sound effects" },
-  { key: "music", label: "5 · Ambience / music" },
-  { key: "render", label: "6 · Render" },
+  { key: "script", label: "Text" },
+  { key: "voice", label: "Narrator" },
+  { key: "characters", label: "Speakers" },
+  { key: "sfx", label: "Sound effects" },
+  { key: "music", label: "Ambience" },
+  { key: "render", label: "Render" },
 ];
 
 function isLikelyManuscript(material: MaterialRecord) {
@@ -58,9 +58,43 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return Boolean(scene?.approvals?.[key]);
   }
 
-  function nextSceneId(currentId: string) {
-    const currentIndex = scenes.findIndex((scene) => scene.id === currentId);
-    return scenes[currentIndex + 1]?.id ?? "";
+  function speakersApproved(scene: SceneRecord | null) {
+    if (!scene) return false;
+    return (
+      scene.final_mix_status === "voices_approved"
+      || scene.final_mix_status === "sfx_approved"
+      || scene.final_mix_status === "ambience_approved"
+      || scene.final_mix_status === "ready_to_render"
+      || (Boolean(scene.speakers.length) && scene.speakers.every((speaker) => speaker.status === "approved"))
+    );
+  }
+
+  function canOpenTab(scene: SceneRecord | null, key: TabKey) {
+    if (!scene) return false;
+    if (key === "script") return true;
+    if (key === "voice") return approval(scene, "script");
+    if (key === "characters") return approval(scene, "voice");
+    if (key === "sfx") return speakersApproved(scene);
+    if (key === "music") return approval(scene, "sfx");
+    return approval(scene, "music");
+  }
+
+  function nextOpenTab(scene: SceneRecord | null): TabKey {
+    if (!scene || !approval(scene, "script")) return "script";
+    if (!approval(scene, "voice")) return "voice";
+    if (!speakersApproved(scene)) return "characters";
+    if (!approval(scene, "sfx")) return "sfx";
+    if (!approval(scene, "music")) return "music";
+    return "render";
+  }
+
+  function stepState(scene: SceneRecord, key: TabKey) {
+    if (key === "script") return approval(scene, "script") ? "Approved" : "Current";
+    if (key === "voice") return approval(scene, "voice") ? "Approved" : approval(scene, "script") ? "Current" : "Locked";
+    if (key === "characters") return speakersApproved(scene) ? "Approved" : approval(scene, "voice") ? "Current" : "Locked";
+    if (key === "sfx") return approval(scene, "sfx") ? "Approved" : speakersApproved(scene) ? "Current" : "Locked";
+    if (key === "music") return approval(scene, "music") ? "Approved" : approval(scene, "sfx") ? "Current" : "Locked";
+    return approval(scene, "music") ? "Ready" : "Locked";
   }
 
   async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
@@ -120,7 +154,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       progress: 15,
       manuscript_ready: 1,
       notes: `MANUSCRIPT::${text}`,
-      next_action: "Review scene text and approve the first voice recommendations.",
+      next_action: "Review episode text and approve the first narrator recommendation.",
     };
     await saveBook(updatedBook);
     setBook(updatedBook);
@@ -158,13 +192,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     (async () => {
       try {
         const uploaded = await findUploadedManuscript(book.id, book.title);
-      if (!uploaded?.text.trim()) return;
-      setManuscriptText(uploaded.text);
-      setManuscriptSourceName(uploaded.material.name);
-      setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
-      await buildScenes(uploaded.text, uploaded.material.name);
+        if (!uploaded?.text.trim()) return;
+        setManuscriptText(uploaded.text);
+        setManuscriptSourceName(uploaded.material.name);
+        setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
+        await buildScenes(uploaded.text, uploaded.material.name);
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Could not turn the uploaded manuscript into scenes.");
+        setError(err instanceof Error ? err.message : "Could not turn the uploaded manuscript into episodes.");
       }
     })();
   }, [book, scenes, loading, importing, manuscriptText]);
@@ -210,7 +244,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       await buildScenes(manuscriptText, manuscriptSourceName);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not build scenes from this manuscript.");
+      setError(err instanceof Error ? err.message : "Could not build episodes from this manuscript.");
     } finally {
       setImporting(false);
     }
@@ -228,7 +262,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       await buildScenes(uploaded.text, uploaded.material.name);
       setError("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not build scenes from the uploaded manuscript.");
+      setError(err instanceof Error ? err.message : "Could not build episodes from the uploaded manuscript.");
     } finally {
       setImporting(false);
     }
@@ -236,7 +270,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function updateScene(scene: SceneRecord, nextTab?: TabKey) {
     if (scene.id.startsWith("preview-")) {
-      setSceneStatus("Your scenes are still finishing their first save. Give it a moment, then try again.");
+      setSceneStatus("Your episodes are still finishing their first save. Give it a moment, then try again.");
       return;
     }
     setScenes((current) => current.map((entry) => (entry.id === scene.id ? scene : entry)));
@@ -247,7 +281,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       setSceneStatus(`Saved ${scene.title}.`);
       if (nextTab) setTab(nextTab);
     } catch (err) {
-      setSceneStatus(err instanceof Error ? err.message : "Could not save this scene yet.");
+      setSceneStatus(err instanceof Error ? err.message : "Could not save this episode yet.");
     } finally {
       setSavingSceneId("");
     }
@@ -271,6 +305,20 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     }, "sfx");
   }
 
+  async function identifySpeakers() {
+    if (!activeScene) return;
+    const speakers = recommendSpeakersForEpisode(activeScene.text);
+    await updateScene({
+      ...activeScene,
+      speakers,
+      approvals: { ...activeScene.approvals, voice: true },
+      final_mix_status: "draft",
+    });
+    setSceneStatus(speakers.length
+      ? `Identified ${speakers.length} likely speaker${speakers.length === 1 ? "" : "s"} for this episode.`
+      : "No named speakers were found in this episode. You can still approve narration and continue.");
+  }
+
   async function toggleCue(kind: "sfx_cues" | "ambience_cues", cueId: string) {
     if (!activeScene) return;
     const cues = activeScene[kind].map((cue) => (cue.id === cueId ? { ...cue, approved: !cue.approved } : cue));
@@ -279,18 +327,17 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       [kind]: cues,
       approvals: {
         ...activeScene.approvals,
-        ...(kind === "sfx_cues" ? { sfx: true } : { music: true }),
+        ...(kind === "sfx_cues" ? { sfx: false } : { music: false }),
       },
       final_mix_status:
         kind === "sfx_cues"
-          ? "sfx_approved"
-          : "ambience_approved",
-    }, kind === "sfx_cues" ? "music" : "render");
+          ? "voices_approved"
+          : "sfx_approved",
+    });
   }
 
   async function markReadyToRender() {
     if (!activeScene) return;
-    const nextId = nextSceneId(activeScene.id);
     await updateScene({
       ...activeScene,
       approvals: { ...activeScene.approvals, draft: true, sfx: true, music: true },
@@ -303,11 +350,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     });
     setRenderJob(job);
     await loadWorkspace();
-    setSceneStatus(nextId ? "Scene queued for the local Qwen renderer. Moving to the next scene." : "Scene queued for the local Qwen renderer.");
-    if (nextId) {
-      setActiveSceneId(nextId);
-      setTab("script");
-    }
+    setActiveSceneId(activeScene.id);
+    setTab("render");
+    setSceneStatus("Episode queued for the local Qwen renderer. Keep this episode open; the finished audio will appear here when the worker writes it.");
   }
 
   async function approveScriptAndMoveOn() {
@@ -336,7 +381,20 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       sfx_cues: [...existingChoices, ...recommendations],
       approvals: { ...activeScene.approvals, sfx: false },
     });
-    setSceneStatus(`Prepared ${recommendations.length} scene-specific sound suggestions. Nothing was approved automatically.`);
+    setSceneStatus(`Prepared ${recommendations.length} episode-specific sound suggestion${recommendations.length === 1 ? "" : "s"}. Nothing was approved automatically.`);
+  }
+
+  async function refreshAmbienceSuggestions() {
+    if (!activeScene) return;
+    const existingChoices = activeScene.ambience_cues.filter((cue) => cue.approved || cue.reason === "Added manually in the studio.");
+    const existingLabels = new Set(existingChoices.map((cue) => cue.label.toLowerCase()));
+    const recommendations = recommendAmbienceCues(activeScene.text).filter((cue) => !existingLabels.has(cue.label.toLowerCase()));
+    await updateScene({
+      ...activeScene,
+      ambience_cues: [...existingChoices, ...recommendations],
+      approvals: { ...activeScene.approvals, music: false },
+    });
+    setSceneStatus(`Prepared ${recommendations.length} episode-specific ambience suggestion${recommendations.length === 1 ? "" : "s"}. Nothing was approved automatically.`);
   }
 
   async function saveCue(kind: "sfx_cues" | "ambience_cues", values: { time: string; label: string; source: string; license: string }) {
@@ -381,7 +439,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         <div>
           <p className="eyebrow">One Listening Room</p>
           <h1>{book?.title ?? "Studio"}</h1>
-          <p className="studio-subtitle">Manuscript, scenes, voices, effects, ambience, and final mix now live in one app space.</p>
+          <p className="studio-subtitle">Create episodes from the manuscript, approve the text, choose voices, place sound, and render the final audio from one screen.</p>
         </div>
         <div className="studio-top-actions">
           <Link className="button ghost" href="/">Back to shelf</Link>
@@ -391,17 +449,17 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       {error && <p className="error" role="alert">{error}</p>}
 
       <section className="studio-summary-bar">
-        <div><span>Scenes</span><strong>{scenes.length || "—"}</strong></div>
-        <div><span>Voices</span><strong>{activeScene?.speakers.length || "—"}</strong></div>
-        <div><span>Effects</span><strong>{activeScene?.sfx_cues.length || "—"}</strong></div>
+        <div><span>Episodes</span><strong>{scenes.length || "—"}</strong></div>
+        <div><span>Speakers</span><strong>{activeScene?.speakers.length || "—"}</strong></div>
+        <div><span>Sound effects</span><strong>{activeScene?.sfx_cues.length || "—"}</strong></div>
         <div><span>Ambience</span><strong>{activeScene?.ambience_cues.length || "—"}</strong></div>
       </section>
 
       {activeScene && (
         <section className="studio-summary-bar">
           <div><span>Text</span><strong>{approval(activeScene, "script") ? "Approved" : "Working"}</strong></div>
-          <div><span>Voice</span><strong>{approval(activeScene, "voice") ? "Locked" : "Needs review"}</strong></div>
-          <div><span>Characters</span><strong>{activeScene.speakers.every((speaker) => speaker.status === "approved") ? "Approved" : "Needs review"}</strong></div>
+          <div><span>Narrator</span><strong>{approval(activeScene, "voice") ? "Approved" : "Needs review"}</strong></div>
+          <div><span>Speakers</span><strong>{speakersApproved(activeScene) ? "Approved" : "Needs review"}</strong></div>
           <div><span>Final mix</span><strong>{approval(activeScene, "music") ? "Approved" : activeScene.final_mix_status.replaceAll("_", " ")}</strong></div>
         </section>
       )}
@@ -409,39 +467,45 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       <section className="unified-studio-grid">
         <aside className="studio-sidebar">
           <div className="card">
-            <h2>Manuscript import</h2>
-            <p className="muted">Paste text here, or pull from the uploaded manuscript file for this book. The Listening Room will split it into 3 to 5 minute production scenes inside this same app.</p>
+            <h2>Project setup</h2>
+            <p className="muted">Upload or paste a manuscript, then The Listening Room splits it into 3 to 5 minute episodes.</p>
             {manuscriptSourceName && (
               <p className="muted">Linked manuscript file: <strong>{manuscriptSourceName}</strong></p>
             )}
             {manuscriptSourceHint && (
               <p className="muted">{manuscriptSourceHint}</p>
             )}
-            <textarea
-              className="studio-manuscript"
-              value={manuscriptText}
-              onChange={(event) => setManuscriptText(event.target.value)}
-              placeholder="Paste the manuscript text here…"
-            />
-            <div className="actions">
-              <button className="button ghost" disabled={importing} onClick={importUploadedManuscript}>
-                {importing ? "Reading manuscript…" : "Use uploaded manuscript file"}
-              </button>
-              <button className="button primary" disabled={importing || !manuscriptText.trim()} onClick={importManuscript}>
-                {importing ? "Building scenes…" : "Build scenes from manuscript"}
-              </button>
-            </div>
+            <details className="studio-details" open={!scenes.length}>
+              <summary>{scenes.length ? "Rebuild episodes from manuscript" : "Add manuscript"}</summary>
+              <textarea
+                className="studio-manuscript"
+                value={manuscriptText}
+                onChange={(event) => setManuscriptText(event.target.value)}
+                placeholder="Paste the manuscript text here…"
+              />
+              <div className="actions">
+                <button className="button ghost" disabled={importing} onClick={importUploadedManuscript}>
+                  {importing ? "Reading manuscript…" : "Use uploaded manuscript file"}
+                </button>
+                <button className="button primary" disabled={importing || !manuscriptText.trim()} onClick={importManuscript}>
+                  {importing ? "Building episodes…" : "Build episodes from manuscript"}
+                </button>
+              </div>
+            </details>
           </div>
 
           <div className="card">
-            <h2>Scene list</h2>
+            <h2>Episodes</h2>
             {scenes.length ? (
               <div className="scene-stack">
                 {scenes.map((scene) => (
                   <button
                     key={scene.id}
                     className={`scene-pill ${activeScene?.id === scene.id ? "active" : ""}`}
-                    onClick={() => setActiveSceneId(scene.id)}
+                    onClick={() => {
+                      setActiveSceneId(scene.id);
+                      setTab(nextOpenTab(scene));
+                    }}
                   >
                     <strong>{scene.scene_order}. {scene.title}</strong>
                     <small>{scene.estimated_minutes} min · {scene.final_mix_status.replaceAll("_", " ")}</small>
@@ -449,7 +513,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                 ))}
               </div>
             ) : (
-              <p className="materials-empty">No scenes yet. Import the manuscript to create the first scene-by-scene workflow here.</p>
+              <p className="materials-empty">No episodes yet. Import the manuscript to create the first episode workflow here.</p>
             )}
           </div>
         </aside>
@@ -459,16 +523,35 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
             <>
               <div className="tabs studio-tabs">
                 {tabs.map((entry) => (
-                  <button key={entry.key} className={tab === entry.key ? "active" : ""} onClick={() => setTab(entry.key)}>
+                  <button
+                    key={entry.key}
+                    className={tab === entry.key ? "active" : ""}
+                    disabled={!canOpenTab(activeScene, entry.key)}
+                    onClick={() => setTab(entry.key)}
+                  >
                     {entry.label}
                   </button>
                 ))}
               </div>
 
               <div className="card studio-scene-card">
+                <div className="episode-step-rail">
+                  {tabs.map((entry) => (
+                    <button
+                      key={`step-${entry.key}`}
+                      className={`episode-step ${tab === entry.key ? "active" : ""} ${canOpenTab(activeScene, entry.key) ? "" : "locked"}`}
+                      disabled={!canOpenTab(activeScene, entry.key)}
+                      onClick={() => setTab(entry.key)}
+                    >
+                      <span>{entry.label}</span>
+                      <strong>{stepState(activeScene, entry.key)}</strong>
+                    </button>
+                  ))}
+                </div>
+
                 <div className="studio-scene-head">
                   <div>
-                    <p className="eyebrow">Scene {activeScene.scene_order}</p>
+                    <p className="eyebrow">Episode {activeScene.scene_order}</p>
                     <h2>{activeScene.title}</h2>
                   </div>
                   <span className="studio-status">{activeScene.final_mix_status.replaceAll("_", " ")}</span>
@@ -476,7 +559,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "script" && (
                   <>
-                    <p className="muted">The original manuscript stays intact. This is the working scene text the rest of the studio builds from.</p>
+                    <p className="muted">The original manuscript stays intact. This is the working episode text the rest of the studio builds from.</p>
                     <textarea
                       className="studio-scene-text"
                       value={activeScene.text}
@@ -487,9 +570,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     />
                     <div className="actions">
                       <button className="button primary" disabled={savingSceneId === activeScene.id || activeScene.id.startsWith("preview-")} onClick={() => updateScene({ ...activeScene, text: activeScene.text }, "voice")}>
-                        {savingSceneId === activeScene.id ? "Saving scene…" : "Save scene text"}
+                        {savingSceneId === activeScene.id ? "Saving episode…" : "Save episode text"}
                       </button>
-                      <button className="button" disabled={savingSceneId === activeScene.id} onClick={approveScriptAndMoveOn}>Approve scene text</button>
+                      <button className="button" disabled={savingSceneId === activeScene.id} onClick={approveScriptAndMoveOn}>Approve text → narrator</button>
                     </div>
                     {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
@@ -500,7 +583,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <p className="muted">Narration uses the local Qwen voice system from yesterday. This page stores the approved direction; your Mac renders the audio later, so there is no OpenAI voice charge from this screen.</p>
                     <div className="studio-render-card">
                       <strong>{activeScene.narrator || "Local Qwen narrator"}</strong>
-                      <small>Render target: local Qwen worker on your Mac. Output saves to the local render folder first.</small>
+                      <small>Recommended narrator for this episode. The Mac render worker creates the audio later.</small>
                     </div>
                     <textarea
                       className="studio-scene-text"
@@ -511,7 +594,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     />
                     <div className="actions">
                       <button className="button primary" onClick={saveNarratorNotes}>Save narration choice</button>
-                      <button className="button" onClick={approveNarratorStage}>Approve narration and continue</button>
+                      <button className="button" onClick={approveNarratorStage}>Approve narrator → identify speakers</button>
                     </div>
                     {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
@@ -519,7 +602,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "characters" && (
                   <>
-                    <p className="muted">The Studio identified likely speaking parts in this scene. Approve the recommendation or replace it with something better.</p>
+                    <p className="muted">Identify the speaking parts in this episode, then approve or adjust each recommended voice.</p>
+                    <div className="actions">
+                      <button className="button" onClick={identifySpeakers}>Identify speakers in this episode</button>
+                    </div>
                     <div className="studio-list">
                       {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
                         <div className="studio-row" key={`${speaker.name}-${index}`}>
@@ -551,11 +637,12 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                             </div>
                           </div>
                         </div>
-                      )) : <p className="materials-empty">No named speakers were found in this scene yet.</p>}
+                      )) : <p className="materials-empty">No speakers have been identified for this episode yet.</p>}
                     </div>
                     <div className="actions">
-                      <button className="button primary" onClick={approveVoices}>Approve character voices and continue</button>
+                      <button className="button primary" onClick={approveVoices}>Approve voices → sound effects</button>
                     </div>
+                    {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
                 )}
 
@@ -563,7 +650,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                   <>
                     <p className="muted">Review several possible moments, approve only the ones that help, and add your own where needed. Refreshing suggestions never auto-approves them.</p>
                     <div className="actions">
-                      <button className="button" onClick={refreshSfxSuggestions}>Refresh scene-specific suggestions</button>
+                      <button className="button" onClick={refreshSfxSuggestions}>Suggest sound effects for this episode</button>
                     </div>
                     <div className="studio-list">
                       {activeScene.sfx_cues.length ? activeScene.sfx_cues.map((cue) => (
@@ -571,7 +658,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
                           <span><strong>{cue.time ? `${cue.time} · ` : ""}{cue.label}</strong><small>{cue.source || cue.reason}{cue.license ? ` · ${cue.license}` : ""}</small></span>
                         </label>
-                      )) : <p className="materials-empty">No sound-effect moments were suggested for this scene yet.</p>}
+                      )) : <p className="materials-empty">No sound-effect moments were suggested for this episode yet.</p>}
                     </div>
                     <div className="studio-list">
                       <input value={sfxDraft.time} onChange={(event) => setSfxDraft((current) => ({ ...current, time: event.target.value }))} placeholder="Timestamp" />
@@ -580,45 +667,50 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       <input value={sfxDraft.license} onChange={(event) => setSfxDraft((current) => ({ ...current, license: event.target.value }))} placeholder="License note" />
                     </div>
                     <div className="actions">
-                      <button className="button" onClick={async () => { await saveCue("sfx_cues", sfxDraft); setSfxDraft({ time: "", label: "", source: "", license: "" }); }}>Add sound cue</button>
-                      <button className="button primary" onClick={() => approveStageWithoutToggling("sfx")}>Approve sound effects and continue</button>
+                      <button className="button" onClick={async () => { await saveCue("sfx_cues", sfxDraft); setSfxDraft({ time: "", label: "", source: "", license: "" }); }}>Add sound effect</button>
+                      <button className="button primary" onClick={() => approveStageWithoutToggling("sfx")}>Approve sound effects → ambience</button>
                     </div>
+                    {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
                 )}
 
                 {tab === "music" && (
                   <>
-                    <p className="muted">Add ambience and music only where it truly supports the scene. Silence is allowed.</p>
+                    <p className="muted">Add ambience only where it supports what is happening in this episode. Silence is allowed.</p>
+                    <div className="actions">
+                      <button className="button" onClick={refreshAmbienceSuggestions}>Suggest ambience for this episode</button>
+                    </div>
                     <div className="studio-list">
                       {activeScene.ambience_cues.length ? activeScene.ambience_cues.map((cue) => (
                         <label className="studio-cue" key={cue.id}>
                           <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("ambience_cues", cue.id)} />
                           <span><strong>{cue.time ? `${cue.time} · ` : ""}{cue.label}</strong><small>{cue.source || cue.reason}{cue.license ? ` · ${cue.license}` : ""}</small></span>
                         </label>
-                      )) : <p className="materials-empty">No ambience or music suggestions were generated for this scene yet.</p>}
+                      )) : <p className="materials-empty">No ambience suggestions were generated for this episode yet.</p>}
                     </div>
                     <div className="studio-list">
                       <input value={musicDraft.time} onChange={(event) => setMusicDraft((current) => ({ ...current, time: event.target.value }))} placeholder="Timestamp / range" />
-                      <input value={musicDraft.label} onChange={(event) => setMusicDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Music direction" />
+                      <input value={musicDraft.label} onChange={(event) => setMusicDraft((current) => ({ ...current, label: event.target.value }))} placeholder="Ambience direction" />
                       <input value={musicDraft.source} onChange={(event) => setMusicDraft((current) => ({ ...current, source: event.target.value }))} placeholder="Source / library" />
                       <input value={musicDraft.license} onChange={(event) => setMusicDraft((current) => ({ ...current, license: event.target.value }))} placeholder="License note" />
                     </div>
                     <div className="actions">
-                      <button className="button" onClick={async () => { await saveCue("ambience_cues", musicDraft); setMusicDraft({ time: "", label: "", source: "", license: "" }); }}>Add music cue</button>
-                      <button className="button primary" onClick={() => approveStageWithoutToggling("music")}>Approve music and continue</button>
+                      <button className="button" onClick={async () => { await saveCue("ambience_cues", musicDraft); setMusicDraft({ time: "", label: "", source: "", license: "" }); }}>Add ambience</button>
+                      <button className="button primary" onClick={() => approveStageWithoutToggling("music")}>Approve ambience → render</button>
                     </div>
+                    {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
                 )}
 
                 {tab === "render" && (
                   <>
-                    <p className="muted">Once text, narration, characters, sound effects, and ambience/music are approved, send the scene into the render queue here.</p>
+                    <p className="muted">Once text, narrator, speakers, sound effects, and ambience are approved, send this episode into the local render queue. Stay here to play the finished audio when it appears.</p>
                     <div className="studio-list">
-                      <div className="studio-render-card"><strong>Scene text</strong><small>{approval(activeScene, "script") ? "Approved" : "Pending"}</small></div>
-                      <div className="studio-render-card"><strong>Narration</strong><small>{approval(activeScene, "voice") ? "Approved" : "Pending"}</small></div>
-                      <div className="studio-render-card"><strong>Characters</strong><small>{activeScene.speakers.every((speaker) => speaker.status === "approved") ? "Approved" : "Pending"}</small></div>
-                      <div className="studio-render-card"><strong>With sound effects</strong><small>{approval(activeScene, "sfx") ? "Approved" : "Pending"}</small></div>
-                      <div className="studio-render-card"><strong>With music background</strong><small>{approval(activeScene, "music") ? "Approved" : "Pending"}</small></div>
+                      <div className="studio-render-card"><strong>Episode text</strong><small>{approval(activeScene, "script") ? "Approved" : "Pending"}</small></div>
+                      <div className="studio-render-card"><strong>Narrator</strong><small>{approval(activeScene, "voice") ? "Approved" : "Pending"}</small></div>
+                      <div className="studio-render-card"><strong>Speakers</strong><small>{speakersApproved(activeScene) ? "Approved" : "Pending"}</small></div>
+                      <div className="studio-render-card"><strong>Sound effects</strong><small>{approval(activeScene, "sfx") ? "Approved" : "Pending"}</small></div>
+                      <div className="studio-render-card"><strong>Ambience</strong><small>{approval(activeScene, "music") ? "Approved" : "Pending"}</small></div>
                     </div>
                     <div className="studio-render-card">
                       <strong>Render job</strong>
@@ -632,9 +724,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       <strong>Render result</strong>
                       {activeScene.render_output_path ? (
                         <>
-                          <small>{activeScene.render_output_path}</small>
                           {isLegacyCloudRenderPath(activeScene.render_output_path) && !soundDesignPlan && (
-                            <small>Legacy cloud narration preview. New renders use the local Qwen worker and write final mixes to the Mac.</small>
+                            <small>Legacy cloud narration preview. New renders use the local Qwen worker and write final mixes on the Mac.</small>
+                          )}
+                          {isLocalRenderPath(activeScene.render_output_path) && (
+                            <small>Rendered on the Mac. Upload or share the file to play it inside this browser.</small>
                           )}
                           {renderArtifactUrl && (
                             activeScene.render_output_path.endsWith(".wav") ? (
@@ -650,12 +744,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           )}
                         </>
                       ) : (
-                        <small>No render output has been written for this scene yet. The local Mac worker writes this after it picks up the queued job.</small>
+                        <small>No render output has been written for this episode yet. The local Mac worker writes this after it picks up the queued job.</small>
                       )}
-                      {activeScene.render_sound_design_plan_path && (
-                        <small>Sound design plan: {activeScene.render_sound_design_plan_path}</small>
-                      )}
-                      {renderJob?.local_output_path && <small>Local file: {renderJob.local_output_path}</small>}
                       {activeScene.render_error_message && !activeScene.render_output_path && (
                         <small>{activeScene.render_error_message}</small>
                       )}
@@ -677,7 +767,6 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                 <div>
                                   {item.description && <small>{item.description}</small>}
                                   {item.reason && <small>Reason: {item.reason}</small>}
-                                  {item.asset_path && <small>Asset: {item.asset_path}</small>}
                                   <small>Gain {item.gain_db} dB · fade {item.fade_in}s in / {item.fade_out}s out</small>
                                   {item.avoid && <small>Avoid: {item.avoid}</small>}
                                 </div>
@@ -697,9 +786,36 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         )}
                       </div>
                     )}
+                    <details className="studio-details advanced-render-details">
+                      <summary>Advanced render details</summary>
+                      <div className="studio-list">
+                        <div className="studio-render-card">
+                          <strong>Job details</strong>
+                          <small>{renderJob ? `Status: ${renderJob.status}` : "No job record loaded."}</small>
+                          {renderJob && <small>Target: {renderJob.render_target.replaceAll("_", " ")}</small>}
+                          {renderJob && <small>Requested: {new Date(renderJob.requested_at).toLocaleString()}</small>}
+                        </div>
+                        <div className="studio-render-card">
+                          <strong>Files</strong>
+                          {activeScene.render_output_path && <small>Output: {activeScene.render_output_path}</small>}
+                          {activeScene.render_sound_design_plan_path && <small>Sound design plan: {activeScene.render_sound_design_plan_path}</small>}
+                          {renderJob?.local_output_path && <small>Local file: {renderJob.local_output_path}</small>}
+                          {soundDesignItems.some((item) => item.asset_path) && (
+                            <small>Matched assets are stored in the sound design plan.</small>
+                          )}
+                        </div>
+                        {activeScene.render_error_message && (
+                          <div className="studio-render-card">
+                            <strong>Last render error</strong>
+                            <small>{activeScene.render_error_message}</small>
+                          </div>
+                        )}
+                      </div>
+                    </details>
                     <div className="actions">
-                      <button className="button primary" onClick={markReadyToRender}>Mark scene ready for render queue</button>
+                      <button className="button primary" onClick={markReadyToRender}>Render this episode</button>
                     </div>
+                    {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
                 )}
               </div>
@@ -707,7 +823,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
           ) : (
             <div className="card">
               <h2>Start with the manuscript</h2>
-              <p className="muted">Once the manuscript is imported, the scene workflow will appear here inside the same app.</p>
+              <p className="muted">Once the manuscript is imported, the episode workflow will appear here inside the same app.</p>
             </div>
           )}
         </section>

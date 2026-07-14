@@ -13,7 +13,7 @@ import { getClientFirestore } from "./client";
 import type { SoundDesignPlanSummary } from "./scenes";
 
 export type RenderJobStatus = "queued" | "processing" | "completed" | "failed";
-export type RenderTarget = "local_qwen" | "cloud_run";
+export type RenderTarget = "local_qwen" | "cloud_run" | "legacy_cloud";
 
 export type RenderJobRecord = {
   id: string;
@@ -37,6 +37,13 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizeRenderTarget(data: DocumentData): RenderTarget {
+  if (data.render_target === "local_qwen" || data.render_target === "cloud_run") {
+    return data.render_target;
+  }
+  return "legacy_cloud";
+}
+
 function normalizeRenderJob(id: string, data: DocumentData): RenderJobRecord {
   return {
     id,
@@ -44,7 +51,7 @@ function normalizeRenderJob(id: string, data: DocumentData): RenderJobRecord {
     scene_id: String(data.scene_id ?? ""),
     scene_title: String(data.scene_title ?? "Untitled scene"),
     status: (data.status as RenderJobStatus) ?? "queued",
-    render_target: (data.render_target as RenderTarget) ?? "local_qwen",
+    render_target: normalizeRenderTarget(data),
     output_path: String(data.output_path ?? ""),
     local_output_path: String(data.local_output_path ?? ""),
     sound_design_plan: data.sound_design_plan as SoundDesignPlanSummary | undefined,
@@ -76,7 +83,7 @@ export async function getLatestRenderJob(sceneId: string): Promise<RenderJobReco
 
 export async function queueRenderJob(input: { bookId: string; sceneId: string; sceneTitle: string }) {
   const existing = await getLatestRenderJob(input.sceneId);
-  if (existing && (existing.status === "queued" || existing.status === "processing")) {
+  if (existing?.render_target === "local_qwen" && (existing.status === "queued" || existing.status === "processing")) {
     return existing;
   }
 

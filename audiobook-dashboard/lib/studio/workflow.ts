@@ -118,6 +118,14 @@ export function recommendSfxCues(text: string) {
   return buildCues(text, sfxRules, 6);
 }
 
+export function recommendAmbienceCues(text: string) {
+  return buildCues(text, ambienceRules, 4);
+}
+
+export function recommendSpeakersForEpisode(text: string) {
+  return extractSpeakers(text);
+}
+
 export function buildScenesFromManuscript(bookId: string, manuscriptText: string): Omit<SceneRecord, "id" | "created_at" | "updated_at">[] {
   return splitIntoScenes(manuscriptText).map((text, index) => {
     const words = text.split(/\s+/).length;
@@ -129,7 +137,7 @@ export function buildScenesFromManuscript(bookId: string, manuscriptText: string
       estimated_minutes: estimateMinutes(words),
       speakers: extractSpeakers(text),
       sfx_cues: recommendSfxCues(text),
-      ambience_cues: buildCues(text, ambienceRules),
+      ambience_cues: recommendAmbienceCues(text),
       narrator: "Local Qwen narrator",
       narrator_voice_id: "local-qwen",
       voice_notes: "",
