@@ -49,6 +49,25 @@ type Sound = {
   created_at: string;
 };
 
+type ArchiveSound = {
+  id: string;
+  name: string;
+  source: string;
+  bundle: string;
+  pack: string;
+  kind: string;
+  relativePath: string;
+  tags: string[];
+};
+
+type ArchiveIndex = {
+  createdAt: string;
+  total: number;
+  items: ArchiveSound[];
+};
+
+const archiveQueueKey = "listening-room-archive-queue";
+
 const stages = ["Not started", "Manuscript prep", "Voice design", "Test scene", "Production", "Corrections", "QA", "Mastered", "Distributed"];
 const narratorStates = ["Not designed", "Auditions ready", "Approved", "Locked"];
 const materialCategories = ["Manuscript", "Audio", "Voice reference", "Artwork", "Production notes", "Export", "Other"];
@@ -82,6 +101,7 @@ function formatBytes(bytes: number) {
 export default function Dashboard() {
   const [books, setBooks] = useState<Book[]>([]);
   const [selected, setSelected] = useState<Book | null>(null);
+  const [workspaceBook, setWorkspaceBook] = useState<Book | null>(null);
   const [filter, setFilter] = useState("All books");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -100,6 +120,11 @@ export default function Dashboard() {
   const [soundUploading, setSoundUploading] = useState(false);
   const [soundInputKey, setSoundInputKey] = useState(0);
   const [soundDraft, setSoundDraft] = useState({ category: "Sound effect", sourceUrl: "", license: "", attribution: "", notes: "" });
+  const [archiveIndex, setArchiveIndex] = useState<ArchiveIndex | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveSearch, setArchiveSearch] = useState("");
+  const [archiveKind, setArchiveKind] = useState("All types");
+  const [archiveQueue, setArchiveQueue] = useState<ArchiveSound[]>([]);
 
   async function loadBooks() {
     try {
@@ -116,6 +141,21 @@ export default function Dashboard() {
 
   useEffect(() => { loadBooks(); }, []);
 
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(archiveQueueKey);
+      if (!saved) return;
+      const parsed = JSON.parse(saved) as ArchiveSound[];
+      if (Array.isArray(parsed)) setArchiveQueue(parsed);
+    } catch {
+      window.localStorage.removeItem(archiveQueueKey);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(archiveQueueKey, JSON.stringify(archiveQueue));
+  }, [archiveQueue]);
+
   async function loadMaterials(bookId: string) {
     setMaterialsLoading(true);
     try {
@@ -130,22 +170,29 @@ export default function Dashboard() {
   }
 
   function openBook(book: Book) {
-    setSelected({ ...book });
+    if (book.is_active) {
+      setWorkspaceBook({ ...book });
+      setSelected(null);
+    } else {
+      setSelected({ ...book });
+      setWorkspaceBook(null);
+    }
     setMaterials([]);
     loadMaterials(book.id);
   }
 
   async function uploadMaterial(file: File) {
-    if (!selected) return;
+    const currentBook = workspaceBook ?? selected;
+    if (!currentBook) return;
     setUploading(true);
     try {
-      const response = await fetch(`/api/materials?bookId=${encodeURIComponent(selected.id)}&category=${encodeURIComponent(materialCategory)}`, {
+      const response = await fetch(`/api/materials?bookId=${encodeURIComponent(currentBook.id)}&category=${encodeURIComponent(materialCategory)}`, {
         method: "POST",
         headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name), "X-File-Size": String(file.size) },
         body: file,
       });
       if (!response.ok) throw new Error("That file could not be stored.");
-      await loadMaterials(selected.id);
+      await loadMaterials(currentBook.id);
       setFileInputKey((key) => key + 1);
       setError("");
     } catch (err) {
@@ -156,10 +203,11 @@ export default function Dashboard() {
   }
 
   async function deleteMaterial(material: Material) {
-    if (!selected || !window.confirm(`Remove “${material.name}” from this book?`)) return;
+    const currentBook = workspaceBook ?? selected;
+    if (!currentBook || !window.confirm(`Remove “${material.name}” from this book?`)) return;
     const response = await fetch(`/api/materials?id=${encodeURIComponent(material.id)}`, { method: "DELETE" });
     if (!response.ok) { setError("That file could not be removed."); return; }
-    await loadMaterials(selected.id);
+    await loadMaterials(currentBook.id);
   }
 
   async function loadSounds() {
@@ -176,9 +224,24 @@ export default function Dashboard() {
     }
   }
 
+  async function loadArchiveIndex() {
+    setArchiveLoading(true);
+    try {
+      const response = await fetch("/sound-archive-index.json", { cache: "no-store" });
+      if (!response.ok) throw new Error("Could not open your sound archive index.");
+      setArchiveIndex(await response.json());
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not open your sound archive index.");
+    } finally {
+      setArchiveLoading(false);
+    }
+  }
+
   function openSoundLibrary() {
     setShowSounds(true);
     loadSounds();
+    if (!archiveIndex && !archiveLoading) loadArchiveIndex();
   }
 
   async function uploadSound(file: File) {
@@ -208,6 +271,18 @@ export default function Dashboard() {
     await loadSounds();
   }
 
+  function queueArchiveSound(sound: ArchiveSound) {
+    setArchiveQueue((current) => current.some((item) => item.id === sound.id) ? current : [sound, ...current]);
+  }
+
+  function removeQueuedArchiveSound(id: string) {
+    setArchiveQueue((current) => current.filter((item) => item.id !== id));
+  }
+
+  function clearArchiveQueue() {
+    setArchiveQueue([]);
+  }
+
   const visible = useMemo(() => books.filter((book) => {
     const matchesSearch = book.title.toLowerCase().includes(search.toLowerCase());
     const matchesFilter = filter === "All books" ||
@@ -216,6 +291,32 @@ export default function Dashboard() {
       (filter === "Complete" && ["Mastered", "Distributed"].includes(book.stage));
     return matchesSearch && matchesFilter;
   }), [books, filter, search]);
+
+  const archiveKinds = useMemo(() => {
+    const kinds = new Set<string>();
+    archiveIndex?.items.forEach((item) => kinds.add(item.kind));
+    return ["All types", ...Array.from(kinds).sort((a, b) => a.localeCompare(b))];
+  }, [archiveIndex]);
+
+  const archiveMatches = useMemo(() => {
+    const query = archiveSearch.trim().toLowerCase();
+    const items = archiveIndex?.items ?? [];
+    return items.filter((item) => {
+      const matchesKind = archiveKind === "All types" || item.kind === archiveKind;
+      if (!matchesKind) return false;
+      if (!query) return true;
+      const haystack = [
+        item.name,
+        item.source,
+        item.bundle,
+        item.pack,
+        item.kind,
+        item.relativePath,
+        item.tags.join(" "),
+      ].join(" ").toLowerCase();
+      return haystack.includes(query);
+    }).slice(0, 60);
+  }, [archiveIndex, archiveKind, archiveSearch]);
 
   const complete = books.filter((book) => ["Mastered", "Distributed"].includes(book.stage)).length;
   const active = books.filter((book) => book.is_active).length;
@@ -318,6 +419,58 @@ export default function Dashboard() {
 
       <footer><span>The Listening Room</span><p>Made for a library worth hearing.</p><span>Private production record</span></footer>
 
+      {workspaceBook && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setWorkspaceBook(null); }}>
+        <section className="modal workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-title">
+          <div className="modal-head">
+            <div>
+              <p className="eyebrow">Current workroom</p>
+              <h2 id="workspace-title">{workspaceBook.title}</h2>
+            </div>
+            <button className="close" onClick={() => setWorkspaceBook(null)} aria-label="Close">×</button>
+          </div>
+          <div className="workspace-summary">
+            <div><span>Stage</span><strong>{workspaceBook.stage}</strong></div>
+            <div><span>Progress</span><strong>{workspaceBook.progress}%</strong></div>
+            <div><span>Narrator</span><strong>{workspaceBook.narrator_status}</strong></div>
+          </div>
+          <section className="materials workspace-next">
+            <div className="materials-head">
+              <div><p className="eyebrow">What to do now</p><h3>Next action</h3></div>
+            </div>
+            <p className="materials-empty workspace-next-copy">{workspaceBook.next_action || "Choose the next production step."}</p>
+            {workspaceBook.notes ? <p className="workspace-notes">{workspaceBook.notes}</p> : null}
+          </section>
+          <section className="materials" aria-labelledby="workspace-materials-title">
+            <div className="materials-head">
+              <div><p className="eyebrow">Stored online</p><h3 id="workspace-materials-title">Project materials</h3></div>
+              <span>{materials.length} {materials.length === 1 ? "file" : "files"}</span>
+            </div>
+            <div className="upload-row">
+              <label>File type<select value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)}>{materialCategories.map((category) => <option key={category}>{category}</option>)}</select></label>
+              <label className={`upload-button ${uploading ? "disabled" : ""}`}>
+                <input key={fileInputKey} type="file" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadMaterial(file); }} />
+                {uploading ? "Storing file…" : "＋ Choose a file"}
+              </label>
+            </div>
+            {materialsLoading ? <p className="materials-empty">Opening stored materials…</p> : materials.length ? (
+              <ul className="material-list">{materials.map((material) => <li key={material.id}>
+                <span className="file-badge">{material.category.slice(0, 1)}</span>
+                <span className="file-details"><strong>{material.name}</strong><small>{material.category} · {formatBytes(material.size)} · {new Date(material.created_at).toLocaleDateString()}</small></span>
+                <a href={`/api/materials?id=${encodeURIComponent(material.id)}`} aria-label={`Download ${material.name}`}>Download</a>
+                <button type="button" onClick={() => deleteMaterial(material)} aria-label={`Remove ${material.name}`}>Remove</button>
+              </li>)}</ul>
+            ) : <p className="materials-empty">No files stored yet. Add the manuscript, notes, exports, or references you want handy while you work.</p>}
+          </section>
+          <div className="modal-foot">
+            <button className="button ghost" onClick={openSoundLibrary}>Open sound library</button>
+            <div>
+              <button className="button ghost" onClick={() => setWorkspaceBook(null)}>Back to shelf</button>
+              <button className="button primary" onClick={() => { setSelected({ ...workspaceBook }); setWorkspaceBook(null); }}>Open full record</button>
+            </div>
+          </div>
+        </section>
+      </div>}
+
       {selected && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setSelected(null); }}>
         <section className="modal" role="dialog" aria-modal="true" aria-labelledby="edit-title">
           <div className="modal-head"><div><p className="eyebrow">Book record</p><h2 id="edit-title">{selected.title}</h2></div><button className="close" onClick={() => setSelected(null)} aria-label="Close">×</button></div>
@@ -374,6 +527,28 @@ export default function Dashboard() {
               {soundUploading ? "Adding to your library…" : "＋ Choose an audio file and add it"}
             </label>
           </div>
+          <div className="sound-shelf-head archive-head"><h3>Archive search</h3><span>{archiveIndex ? `${archiveIndex.total} sounds indexed` : "search your raw library"}</span></div>
+          <p className="sound-intro archive-intro">Search your full Adobe and Sonniss download folders here first. When you find a likely match, you can go straight to the right pack instead of hunting around.</p>
+          <div className="archive-tools">
+            <label className="search archive-search"><span>⌕</span><input value={archiveSearch} onChange={(e) => setArchiveSearch(e.target.value)} placeholder="Try rain, hotel, crowd, footsteps, radio…" aria-label="Search your sound archive" /></label>
+            <label className="archive-filter">Type<select value={archiveKind} onChange={(e) => setArchiveKind(e.target.value)}>{archiveKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+          </div>
+          {archiveQueue.length ? <>
+            <div className="sound-shelf-head queue-head"><h3>Import next</h3><span>{archiveQueue.length} saved</span></div>
+            <ul className="archive-list queue-list">{archiveQueue.map((item) => <li key={item.id}>
+              <div className="archive-title"><span className="file-badge">★</span><span><strong>{item.name}</strong><small>{item.kind} · {item.source}{item.pack ? ` · ${item.pack}` : ""}</small></span></div>
+              <div className="archive-path"><span>{item.relativePath}</span></div>
+              <div className="archive-actions"><button type="button" onClick={() => removeQueuedArchiveSound(item.id)}>Remove</button></div>
+            </li>)}</ul>
+            <div className="queue-tools"><button type="button" className="button ghost" onClick={clearArchiveQueue}>Clear shortlist</button></div>
+          </> : null}
+          {archiveLoading ? <p className="materials-empty">Opening your raw sound archive…</p> : archiveIndex ? (
+            archiveMatches.length ? <ul className="archive-list">{archiveMatches.map((item) => <li key={item.id}>
+              <div className="archive-title"><span className="file-badge">♪</span><span><strong>{item.name}</strong><small>{item.kind} · {item.source}{item.pack ? ` · ${item.pack}` : ""}</small></span></div>
+              <div className="archive-path"><span>{item.relativePath}</span></div>
+              <div className="archive-actions">{archiveQueue.some((queued) => queued.id === item.id) ? <span>Saved</span> : <button type="button" onClick={() => queueArchiveSound(item)}>Import next</button>}</div>
+            </li>)}</ul> : <p className="materials-empty">No archive sounds matched that search yet. Try a simpler word like rain, wind, city, crowd, bell, door, train, or radio.</p>
+          ) : <p className="materials-empty">The archive index is not ready yet.</p>}
           <div className="sound-shelf-head"><h3>Your collection</h3><span>{sounds.length} {sounds.length === 1 ? "sound" : "sounds"}</span></div>
           {soundsLoading ? <p className="materials-empty">Opening your sound library…</p> : sounds.length ? <ul className="sound-list">{sounds.map((sound) => <li key={sound.id}>
             <div className="sound-title"><span className="file-badge">♫</span><span><strong>{sound.name}</strong><small>{sound.category} · {formatBytes(sound.size)}{sound.license ? ` · ${sound.license}` : " · License not recorded"}</small></span></div>
