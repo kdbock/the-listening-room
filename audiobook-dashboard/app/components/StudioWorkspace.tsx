@@ -124,6 +124,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedCharacterType, setSelectedCharacterType] = useState("");
+  const [selectedDialogueTone, setSelectedDialogueTone] = useState("");
+  const [selectedDialogueUrgency, setSelectedDialogueUrgency] = useState<StudioDialogueAssignment["urgency"]>("medium");
   const [selectedDialogueText, setSelectedDialogueText] = useState("");
   const [selectedDialogueRange, setSelectedDialogueRange] = useState<{ start: number; end: number } | null>(null);
   const attemptedAutoImport = useRef(false);
@@ -949,6 +951,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       color,
       start: assignmentStart,
       end: assignmentEnd,
+      tone: selectedDialogueTone,
+      urgency: selectedDialogueUrgency,
       source: "manual",
       confidence: "high",
     };
@@ -987,6 +991,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSelectedDialogueRange(null);
     setSelectedSpeakerName(speaker.name);
     setSelectedCharacterType(typeValue || speaker.character_type || "");
+    setSelectedDialogueTone("");
+    setSelectedDialogueUrgency("medium");
     window.getSelection()?.removeAllRanges();
     setSceneStatus(rangeIsValid ? `Updated episode text and assigned it to ${speaker.name}.` : `Assigned selected text to ${speaker.name}.`);
   }
@@ -1526,12 +1532,41 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               ))}
                             </select>
                           </label>
+                          <label>
+                            Tone
+                            <select
+                              value={selectedDialogueTone}
+                              onChange={(event) => setSelectedDialogueTone(event.target.value)}
+                            >
+                              <option value="">Default</option>
+                              <option value="dry">Dry</option>
+                              <option value="warm">Warm</option>
+                              <option value="snarky">Snarky</option>
+                              <option value="scared">Scared</option>
+                              <option value="angry">Angry</option>
+                              <option value="tender">Tender</option>
+                              <option value="teasing">Teasing</option>
+                              <option value="deadpan">Deadpan</option>
+                              <option value="urgent">Urgent</option>
+                            </select>
+                          </label>
+                          <label>
+                            Urgency
+                            <select
+                              value={selectedDialogueUrgency}
+                              onChange={(event) => setSelectedDialogueUrgency(event.target.value as StudioDialogueAssignment["urgency"])}
+                            >
+                              <option value="low">Low</option>
+                              <option value="medium">Medium</option>
+                              <option value="high">High</option>
+                            </select>
+                          </label>
                           <div className="actions">
                             <button className="button primary" onClick={() => assignSelectedTextToSpeaker()}>
                               Assign selected dialogue
                             </button>
                           </div>
-                          <small>{selectedDialogueRange ? `Selected characters ${selectedDialogueRange.start}–${selectedDialogueRange.end}. ` : ""}Pick a character and optional trope/type, then assign.</small>
+                          <small>{selectedDialogueRange ? `Selected characters ${selectedDialogueRange.start}–${selectedDialogueRange.end}. ` : ""}Pick character, trope/type, optional tone, then assign.</small>
                         </div>
                       </div>
                       <div className="speaker-side-card">
