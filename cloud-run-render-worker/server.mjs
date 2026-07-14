@@ -1,6 +1,7 @@
 import http from "node:http";
+import { Buffer } from "node:buffer";
 import { initializeApp, applicationDefault, cert } from "firebase-admin/app";
-import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import { getFirestore } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
 
 const port = Number(process.env.PORT || 8080);
@@ -8,6 +9,8 @@ const projectId = process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT
 const bucketName = process.env.FIREBASE_STORAGE_BUCKET || process.env.STORAGE_BUCKET || "";
 const adminClientEmail = process.env.FIREBASE_CLIENT_EMAIL || "";
 const adminPrivateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n") || "";
+const openAiApiKey = process.env.OPENAI_API_KEY || "";
+const openAiSpeechModel = process.env.OPENAI_SPEECH_MODEL || "gpt-4o-mini-tts";
 
 function nowIso() {
   return new Date().toISOString();
@@ -111,12 +114,14 @@ async function renderScenePackage({ job, scene, book }) {
     throw new Error("FIREBASE_STORAGE_BUCKET or STORAGE_BUCKET is required.");
   }
 
-  const artifactPath = `renders/${book.id}/${scene.id}/${job.id}/render-plan.json`;
+  const artifactBase = `renders/${book.id}/${scene.id}/${job.id}`;
   const artifact = {
     generated_at: nowIso(),
     worker: "cloud-run-render-worker",
-    status: "placeholder_render_package",
-    note: "This package proves the render queue and worker wiring. Replace this with true WAV generation next.",
+    status: openAiApiKey ? "narration_preview_audio" : "placeholder_render_package",
+    note: openAiApiKey
+      ? "This is the first playable render milestone: narration-only scene audio from the approved narration choice. Character-by-character dialogue rendering comes next."
+      : "This package proves the render queue and worker wiring. Add OPENAI_API_KEY to Cloud Run to generate a playable narration preview next.",
     book: {
       id: book.id,
       title: book.title,
@@ -138,8 +143,35 @@ async function renderScenePackage({ job, scene, book }) {
     },
   };
 
+  let outputPath = `${artifactBase}/render-plan.json`;
+
+  if (openAiApiKey) {
+    const narrationText = String(scene.text || "").trim();
+    if (!narrationText) {
+      throw new Error("The scene text is empty, so no narration audio can be generated.");
+    }
+
+    const audioPath = `${artifactBase}/narration-preview.wav`;
+    const chunks = chunkNarrationText(narrationText);
+    const wavBuffers = [];
+    for (const chunk of chunks) {
+      wavBuffers.push(await synthesizeNarrationChunk(chunk, scene));
+    }
+    const mergedWav = mergeWavBuffers(wavBuffers);
+    try {
+      await storage.bucket(bucketName).file(audioPath).save(mergedWav, {
+        contentType: "audio/wav",
+      });
+    } catch (error) {
+      throw new Error(`Could not write narration preview to Storage: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    artifact.audio_preview_path = audioPath;
+    artifact.audio_preview_chunks = chunks.length;
+    outputPath = audioPath;
+  }
+
   try {
-    await storage.bucket(bucketName).file(artifactPath).save(
+    await storage.bucket(bucketName).file(`${artifactBase}/render-plan.json`).save(
       JSON.stringify(artifact, null, 2),
       { contentType: "application/json; charset=utf-8" },
     );
@@ -147,7 +179,126 @@ async function renderScenePackage({ job, scene, book }) {
     throw new Error(`Could not write render artifact to Storage: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  return { outputPath: artifactPath };
+  return { outputPath };
+}
+
+function chunkNarrationText(text) {
+  const paragraphs = text
+    .split(/\n\s*\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  const chunks = [];
+  let current = "";
+  for (const paragraph of paragraphs) {
+    const candidate = current ? `${current}\n\n${paragraph}` : paragraph;
+    if (candidate.length > 3800 && current) {
+      chunks.push(current);
+      current = paragraph;
+    } else {
+      current = candidate;
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.length ? chunks : [text.slice(0, 3800)];
+}
+
+function chooseNarrationVoice(scene) {
+  const label = String(scene.narrator || "").toLowerCase();
+  if (label.includes("older woman")) return { voice: "ballad", instructions: "Older adult feminine narrator. Warm, reflective, steady, emotionally grounded." };
+  if (label.includes("older man")) return { voice: "onyx", instructions: "Older adult masculine narrator. Calm, grounded, reflective, never theatrical." };
+  if (label.includes("younger woman")) return { voice: "shimmer", instructions: "Younger adult feminine narrator. Clear, warm, emotionally present, not childish." };
+  if (label.includes("younger man")) return { voice: "verse", instructions: "Younger adult masculine narrator. Clear, natural, emotionally present, not boyish." };
+  if (label.includes("warm adult man")) return { voice: "cedar", instructions: "Adult masculine narrator. Warm, intimate, steady, trustworthy, restrained." };
+  return { voice: "marin", instructions: "Adult feminine narrator. Warm, intimate, steady, emotionally intelligent, restrained." };
+}
+
+async function synthesizeNarrationChunk(text, scene) {
+  const voiceChoice = chooseNarrationVoice(scene);
+  const instructionParts = [voiceChoice.instructions];
+  if (scene.voice_notes) {
+    instructionParts.push(String(scene.voice_notes));
+  }
+
+  const response = await fetch("https://api.openai.com/v1/audio/speech", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${openAiApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: openAiSpeechModel,
+      input: text,
+      voice: voiceChoice.voice,
+      instructions: instructionParts.join(" ").trim(),
+      response_format: "wav",
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`OpenAI speech generation failed: ${response.status} ${body}`);
+  }
+
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function parseWav(buffer) {
+  const riff = buffer.toString("ascii", 0, 4);
+  const wave = buffer.toString("ascii", 8, 12);
+  if (riff !== "RIFF" || wave !== "WAVE") {
+    throw new Error("OpenAI did not return a WAV file in the expected format.");
+  }
+
+  let offset = 12;
+  let fmt;
+  let data;
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const chunkStart = offset + 8;
+    const chunkEnd = chunkStart + chunkSize;
+    if (chunkId === "fmt ") {
+      fmt = buffer.subarray(chunkStart, chunkEnd);
+    }
+    if (chunkId === "data") {
+      data = buffer.subarray(chunkStart, chunkEnd);
+    }
+    offset = chunkEnd + (chunkSize % 2);
+  }
+
+  if (!fmt || !data) {
+    throw new Error("The WAV response is missing fmt or data chunks.");
+  }
+
+  return { fmt, data };
+}
+
+function mergeWavBuffers(buffers) {
+  const parsed = buffers.map(parseWav);
+  const fmtHex = parsed[0].fmt.toString("hex");
+  for (const entry of parsed.slice(1)) {
+    if (entry.fmt.toString("hex") !== fmtHex) {
+      throw new Error("Narration chunks returned incompatible WAV formats.");
+    }
+  }
+
+  const dataBuffer = Buffer.concat(parsed.map((entry) => entry.data));
+  const riffSize = 4 + (8 + parsed[0].fmt.length) + (8 + dataBuffer.length);
+  const header = Buffer.alloc(12);
+  header.write("RIFF", 0, "ascii");
+  header.writeUInt32LE(riffSize, 4);
+  header.write("WAVE", 8, "ascii");
+
+  const fmtHeader = Buffer.alloc(8);
+  fmtHeader.write("fmt ", 0, "ascii");
+  fmtHeader.writeUInt32LE(parsed[0].fmt.length, 4);
+
+  const dataHeader = Buffer.alloc(8);
+  dataHeader.write("data", 0, "ascii");
+  dataHeader.writeUInt32LE(dataBuffer.length, 4);
+
+  return Buffer.concat([header, fmtHeader, parsed[0].fmt, dataHeader, dataBuffer]);
 }
 
 async function completeJob(jobId, outputPath) {
