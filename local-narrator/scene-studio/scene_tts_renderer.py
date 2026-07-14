@@ -56,6 +56,44 @@ def split_sentences(paragraph: str) -> list[str]:
     return parts or [paragraph]
 
 
+def split_long_sentence(sentence: str, maximum: int = 180) -> list[str]:
+    sentence = sentence.strip()
+    if len(sentence) <= maximum:
+        return [sentence]
+    pieces = re.split(r"(?<=[,;:—–-])\s+", sentence)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        candidate = f"{current} {piece}".strip()
+        if current and len(candidate) > maximum:
+            chunks.append(current)
+            current = piece
+        else:
+            current = candidate
+    if current:
+        chunks.append(current)
+    if all(len(chunk) <= maximum * 1.25 for chunk in chunks):
+        return chunks
+    forced: list[str] = []
+    for chunk in chunks:
+        words = chunk.split()
+        current_words: list[str] = []
+        for word in words:
+            candidate = " ".join([*current_words, word])
+            if current_words and len(candidate) > maximum:
+                forced.append(" ".join(current_words))
+                current_words = [word]
+            else:
+                current_words.append(word)
+        if current_words:
+            forced.append(" ".join(current_words))
+    return forced or [sentence]
+
+
+def is_renderable_text(text: str) -> bool:
+    return bool(re.search(r"[A-Za-z0-9]", text))
+
+
 def read_wav(path: Path) -> tuple[np.ndarray, int]:
     with wave.open(str(path), "rb") as audio:
         if audio.getnchannels() != 1 or audio.getsampwidth() != 2:
@@ -93,6 +131,14 @@ def write_wav(path: Path, samples: np.ndarray, rate: int) -> None:
     os.replace(temporary, path)
 
 
+def find_generated_wav(segments_dir: Path, prefix: str) -> Path | None:
+    expected = segments_dir / f"{prefix}_000.wav"
+    if expected.exists():
+        return expected
+    matches = sorted(segments_dir.glob(f"{prefix}*.wav"))
+    return matches[0] if matches else None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
@@ -108,10 +154,19 @@ def main() -> None:
         paragraphs = [p.strip() for p in str(planned.get("text", "")).split("\n\n") if p.strip()]
         for paragraph in paragraphs:
             sentences = split_sentences(paragraph)
+            render_sentences: list[tuple[str, bool]] = []
+            for sentence_index, sentence in enumerate(sentences):
+                if not is_renderable_text(sentence):
+                    continue
+                chunks = split_long_sentence(sentence)
+                for chunk_index, chunk in enumerate(chunks):
+                    if not is_renderable_text(chunk):
+                        continue
+                    render_sentences.append((chunk, sentence_index == len(sentences) - 1 and chunk_index == len(chunks) - 1))
             units.extend((
-                sentence, i == len(sentences) - 1, str(planned["speaker"]),
+                sentence, ends_paragraph, str(planned["speaker"]),
                 str(planned["reference_audio"]), str(planned["reference_text"]),
-            ) for i, sentence in enumerate(sentences))
+            ) for sentence, ends_paragraph in render_sentences)
     if not units:
         raise ValueError("No sentences were found in the approved scene text.")
     segments_dir.mkdir(parents=True, exist_ok=True)
@@ -135,6 +190,9 @@ def main() -> None:
                     output_path=str(segments_dir), file_prefix=prefix, audio_format="wav",
                     temperature=0.65, verbose=False,
                 )
+            generated = find_generated_wav(segments_dir, prefix) or generated
+        if not generated.exists():
+            raise RuntimeError(f"Qwen did not produce audio for sentence {index}/{len(units)} ({speaker}): {sentence[:220]}")
         samples, sample_rate = read_wav(generated)
         assembled.append(trim_edges(samples, sample_rate))
         pause_seconds = 0.72 if ends_paragraph else 0.32
