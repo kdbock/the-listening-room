@@ -10,7 +10,7 @@ import {
 } from "firebase/firestore";
 import {
   deleteObject,
-  getDownloadURL,
+  getBytes,
   ref,
   uploadBytes,
 } from "firebase/storage";
@@ -100,10 +100,6 @@ export async function downloadMaterialUrl(material: MaterialRecord) {
 }
 
 export async function readMaterialText(material: MaterialRecord) {
-  const url = await getDownloadURL(ref(getClientStorage(), material.storage_path));
-  const response = await fetch(url, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error(`Could not read ${material.name}.`);
-  }
-  return response.text();
+  const bytes = await getBytes(ref(getClientStorage(), material.storage_path), 10 * 1024 * 1024);
+  return new TextDecoder("utf-8").decode(bytes);
 }
