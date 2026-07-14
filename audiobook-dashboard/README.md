@@ -16,6 +16,20 @@ npm run dev
 npm run build
 ```
 
+## Firebase
+
+This project is prepared for a shared Firestore-backed workflow.
+
+1. Copy `.env.example` to `.env.local`
+2. Confirm the Firebase web app values for `the-listening-room-b5a70`
+3. Use Firestore for shared workflow state and keep large source audio in iCloud
+
+Current Firebase wiring lives in:
+
+- `lib/firebase/config.ts`
+- `lib/firebase/client.ts`
+- `lib/firebase/collections.ts`
+
 This starter does not use `wrangler.jsonc`.
 
 ## Included Shape

@@ -1,30 +1,10 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { createBook, listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 
-type Book = {
-  id: string;
-  title: string;
-  stage: string;
-  progress: number;
-  is_active: number;
-  narrator_status: string;
-  manuscript_ready: number;
-  voice_approved: number;
-  test_approved: number;
-  settings_locked: number;
-  rendering_complete: number;
-  qa_passed: number;
-  master_approved: number;
-  episodes_complete: number;
-  episodes_total: number;
-  corrections_open: number;
-  next_action: string;
-  target_date: string;
-  project_path: string;
-  notes: string;
-  updated_at: string;
-};
+type Book = FirestoreBook;
 
 type Material = {
   id: string;
@@ -99,6 +79,7 @@ function formatBytes(bytes: number) {
 }
 
 export default function Dashboard() {
+  const router = useRouter();
   const [books, setBooks] = useState<Book[]>([]);
   const [selected, setSelected] = useState<Book | null>(null);
   const [workspaceBook, setWorkspaceBook] = useState<Book | null>(null);
@@ -129,9 +110,7 @@ export default function Dashboard() {
 
   async function loadBooks() {
     try {
-      const response = await fetch("/api/books", { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not load your library.");
-      setBooks(await response.json());
+      setBooks(await listBooks());
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load your library.");
@@ -172,9 +151,8 @@ export default function Dashboard() {
 
   function openBook(book: Book) {
     if (book.is_active) {
-      setWorkspaceBook({ ...book });
-      setStudioBook(null);
-      setSelected(null);
+      router.push(`/studio/${book.id}`);
+      return;
     } else {
       setSelected({ ...book });
       setWorkspaceBook(null);
@@ -339,28 +317,32 @@ export default function Dashboard() {
 
   async function saveBook(book: Book) {
     setSaving(true);
-    const payload: Record<string, unknown> = { id: book.id };
-    for (const [key] of checklist) payload[toCamel(key)] = Boolean(book[key]);
-    Object.assign(payload, {
-      title: book.title, stage: book.stage, progress: Number(book.progress),
-      isActive: Boolean(book.is_active), narratorStatus: book.narrator_status,
-      episodesComplete: Number(book.episodes_complete), episodesTotal: Number(book.episodes_total),
-      correctionsOpen: Number(book.corrections_open), nextAction: book.next_action,
-      targetDate: book.target_date, projectPath: book.project_path, notes: book.notes,
-    });
-    const response = await fetch("/api/books", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-    setSaving(false);
-    if (!response.ok) { setError("That update could not be saved."); return; }
-    setSelected(null);
-    await loadBooks();
+    try {
+      await saveBook(book);
+      setSelected(null);
+      setWorkspaceBook(null);
+      setStudioBook(null);
+      await loadBooks();
+      setError("");
+    } catch {
+      setError("That update could not be saved.");
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function addBook(event: React.FormEvent) {
     event.preventDefault();
     if (!newTitle.trim()) return;
-    const response = await fetch("/api/books", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: newTitle }) });
-    if (!response.ok) { setError("That title could not be added."); return; }
-    setNewTitle(""); setShowAdd(false); await loadBooks();
+    try {
+      await createBook(newTitle.trim());
+      setNewTitle("");
+      setShowAdd(false);
+      await loadBooks();
+      setError("");
+    } catch {
+      setError("That title could not be added.");
+    }
   }
 
   function exportLibrary() {
@@ -479,7 +461,7 @@ export default function Dashboard() {
             <button className="button ghost" onClick={openSoundLibrary}>Open sound library</button>
             <div>
               <button className="button ghost" onClick={() => setWorkspaceBook(null)}>Back to shelf</button>
-              <button className="button primary" onClick={() => openStudio(workspaceBook)}>Open studio</button>
+              <button className="button primary" onClick={() => router.push(`/studio/${workspaceBook.id}`)}>Open studio</button>
             </div>
           </div>
         </section>
