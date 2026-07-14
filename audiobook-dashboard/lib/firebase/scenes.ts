@@ -24,6 +24,9 @@ export type StudioCue = {
   label: string;
   reason: string;
   approved: boolean;
+  time?: string;
+  source?: string;
+  license?: string;
 };
 
 export type SceneRecord = {
@@ -37,6 +40,17 @@ export type SceneRecord = {
   sfx_cues: StudioCue[];
   ambience_cues: StudioCue[];
   final_mix_status: "draft" | "voices_approved" | "sfx_approved" | "ambience_approved" | "ready_to_render";
+  narrator?: string;
+  voice_notes?: string;
+  intro?: string;
+  outro?: string;
+  approvals?: {
+    script?: boolean;
+    voice?: boolean;
+    draft?: boolean;
+    sfx?: boolean;
+    music?: boolean;
+  };
   updated_at: string;
   created_at: string;
 };

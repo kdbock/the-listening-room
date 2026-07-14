@@ -111,6 +111,17 @@ export function buildScenesFromManuscript(bookId: string, manuscriptText: string
       speakers: extractSpeakers(text),
       sfx_cues: buildCues(text, sfxRules),
       ambience_cues: buildCues(text, ambienceRules),
+      narrator: "Listening Room narrator",
+      voice_notes: "",
+      intro: "none",
+      outro: "none",
+      approvals: {
+        script: false,
+        voice: false,
+        draft: false,
+        sfx: false,
+        music: false,
+      },
       final_mix_status: "draft",
     };
   });
