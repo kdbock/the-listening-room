@@ -123,6 +123,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manualSpeakerName, setManualSpeakerName] = useState("");
   const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
+  const [selectedCharacterType, setSelectedCharacterType] = useState("");
   const [selectedDialogueText, setSelectedDialogueText] = useState("");
   const [selectedDialogueRange, setSelectedDialogueRange] = useState<{ start: number; end: number } | null>(null);
   const attemptedAutoImport = useRef(false);
@@ -859,6 +860,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     });
     setManualSpeakerName("");
     setSelectedSpeakerName(name);
+    setSelectedCharacterType(nextSpeaker.character_type || "");
     setSceneStatus(`Added ${name}. Select their text below and assign it.`);
   }
 
@@ -905,7 +907,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSelectedDialogueRange(start !== null && end !== null && end > start ? { start, end } : null);
   }
 
-  async function assignSelectedTextToSpeaker(speakerName = selectedSpeakerName) {
+  function chooseSpeakerForAssignment(speakerName: string) {
+    setSelectedSpeakerName(speakerName);
+    const speaker = activeScene?.speakers.find((entry) => entry.name === speakerName);
+    setSelectedCharacterType(speaker?.character_type || "");
+  }
+
+  async function assignSelectedTextToSpeaker(speakerName = selectedSpeakerName, typeValue = selectedCharacterType) {
     if (!activeScene) return;
     const selected = selectedDialogueText.trim() || window.getSelection()?.toString().trim() || "";
     if (!speakerName || !selected) {
@@ -914,6 +922,16 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     }
     const speaker = activeScene.speakers.find((entry) => entry.name === speakerName);
     if (!speaker) return;
+    if (typeValue && speaker.character_type !== typeValue) {
+      await updateSpeakerCharacterTypeForBook(speaker.name, typeValue);
+    }
+    const type = characterTypes.find((option) => option.value === typeValue);
+    const remembered = bookTypeMemory(typeValue);
+    const speakerGender = speaker.gender || inferSpeakerGender(activeScene, speaker.name);
+    const typeVoice = type?.voice || remembered?.approved_voice || speaker.approved_voice;
+    const approvedVoice = typeValue && voiceCompatibleWithGender(typeVoice, speakerGender)
+      ? canonicalVoiceValue(typeVoice)
+      : canonicalVoiceValue(speaker.approved_voice);
     const color = speaker.color || speakerColors[activeScene.speakers.findIndex((entry) => entry.name === speaker.name) % speakerColors.length];
     const range = selectedDialogueRange;
     const originalText = activeScene.text;
@@ -950,7 +968,14 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       ...activeScene,
       text: nextText,
       dialogue_assignments: [...adjustedAssignments.filter((entry) => !(entry.speaker === assignment.speaker && entry.text === assignment.text)), assignment],
-      speakers: activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, line_count: entry.line_count + 1, color } : entry),
+      speakers: activeScene.speakers.map((entry) => entry.name === speaker.name ? {
+        ...entry,
+        character_type: typeValue || entry.character_type,
+        approved_voice: approvedVoice,
+        gender: speakerGender,
+        line_count: entry.line_count + 1,
+        color,
+      } : entry),
       approvals: { ...activeScene.approvals, voice: true },
       final_mix_status: "draft",
       render_job_status: "",
@@ -961,6 +986,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSelectedDialogueText("");
     setSelectedDialogueRange(null);
     setSelectedSpeakerName(speaker.name);
+    setSelectedCharacterType(typeValue || speaker.character_type || "");
     window.getSelection()?.removeAllRanges();
     setSceneStatus(rangeIsValid ? `Updated episode text and assigned it to ${speaker.name}.` : `Assigned selected text to ${speaker.name}.`);
   }
@@ -1474,7 +1500,38 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               placeholder="Select dialogue above, or paste missed text here."
                             />
                           </label>
-                          <small>{selectedDialogueRange ? `Selected characters ${selectedDialogueRange.start}–${selectedDialogueRange.end}. ` : ""}Click a speaker below to assign this text.</small>
+                          <label>
+                            Character
+                            <select
+                              value={selectedSpeakerName}
+                              onChange={(event) => chooseSpeakerForAssignment(event.target.value)}
+                            >
+                              <option value="">Choose character…</option>
+                              {activeScene.speakers.map((speaker) => (
+                                <option key={`assign-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Character type / trope
+                            <select
+                              value={selectedCharacterType}
+                              onChange={(event) => setSelectedCharacterType(event.target.value)}
+                            >
+                              <option value="">Choose type…</option>
+                              {characterTypes.map((option) => (
+                                <option key={`assign-type-${option.value}`} value={option.value}>
+                                  {option.label} — {option.detail}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <div className="actions">
+                            <button className="button primary" onClick={() => assignSelectedTextToSpeaker()}>
+                              Assign selected dialogue
+                            </button>
+                          </div>
+                          <small>{selectedDialogueRange ? `Selected characters ${selectedDialogueRange.start}–${selectedDialogueRange.end}. ` : ""}Pick a character and optional trope/type, then assign.</small>
                         </div>
                       </div>
                       <div className="speaker-side-card">
@@ -1489,7 +1546,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               type="button"
                               className={`speaker-chip ${selectedSpeakerName === speaker.name ? "active" : ""}`}
                               key={`legend-${speaker.name}`}
-                              onClick={() => assignSelectedTextToSpeaker(speaker.name)}
+                              onClick={() => chooseSpeakerForAssignment(speaker.name)}
                             >
                               <i style={{ backgroundColor: speakerColor(speaker, index) }} />
                               {speaker.name}
@@ -1589,11 +1646,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     </div>
                     <div className="studio-list">
                       {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
-                        <div className="studio-row speaker-pick-row" key={`${speaker.name}-${index}`} onClick={() => assignSelectedTextToSpeaker(speaker.name)}>
+                        <div className="studio-row speaker-pick-row" key={`${speaker.name}-${index}`} onClick={() => chooseSpeakerForAssignment(speaker.name)}>
                           <div>
                             <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
                             <small>
-                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {characterTypeLabel(speaker.character_type)} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to assign selected text
+                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {characterTypeLabel(speaker.character_type)} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to select
                               {speaker.gender === "masculine" ? " · no masculine local voice installed yet" : ""}
                             </small>
                           </div>
