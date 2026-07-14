@@ -4,7 +4,6 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  orderBy,
   query,
   updateDoc,
   where,
@@ -51,9 +50,10 @@ export async function listScenes(bookId: string): Promise<SceneRecord[]> {
   const snapshot = await getDocs(query(
     collection(db, firestoreCollections.scenes),
     where("book_id", "==", bookId),
-    orderBy("scene_order", "asc"),
   ));
-  return snapshot.docs.map((entry) => ({ id: entry.id, ...(entry.data() as Omit<SceneRecord, "id">) }));
+  return snapshot.docs
+    .map((entry) => ({ id: entry.id, ...(entry.data() as Omit<SceneRecord, "id">) }))
+    .sort((left, right) => left.scene_order - right.scene_order);
 }
 
 export async function replaceScenes(bookId: string, scenes: Omit<SceneRecord, "id" | "created_at" | "updated_at">[]) {

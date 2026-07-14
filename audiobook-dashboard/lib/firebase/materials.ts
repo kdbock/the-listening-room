@@ -4,7 +4,6 @@ import {
   deleteDoc,
   doc,
   getDocs,
-  orderBy,
   query,
   where,
   type DocumentData,
@@ -52,10 +51,11 @@ export async function listMaterials(bookId: string): Promise<MaterialRecord[]> {
   const snapshot = await getDocs(query(
     collection(db, firestoreCollections.materials),
     where("book_id", "==", bookId),
-    orderBy("created_at", "desc"),
   ));
 
-  return snapshot.docs.map((entry) => normalizeMaterial(entry.id, entry.data()));
+  return snapshot.docs
+    .map((entry) => normalizeMaterial(entry.id, entry.data()))
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
 }
 
 export async function uploadMaterialFile(bookId: string, category: string, file: File) {
