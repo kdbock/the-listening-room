@@ -58,6 +58,15 @@ export async function listMaterials(bookId: string): Promise<MaterialRecord[]> {
     .sort((left, right) => right.created_at.localeCompare(left.created_at));
 }
 
+export async function listAllMaterials(): Promise<MaterialRecord[]> {
+  const db = getClientFirestore();
+  const snapshot = await getDocs(collection(db, firestoreCollections.materials));
+
+  return snapshot.docs
+    .map((entry) => normalizeMaterial(entry.id, entry.data()))
+    .sort((left, right) => right.created_at.localeCompare(left.created_at));
+}
+
 export async function uploadMaterialFile(bookId: string, category: string, file: File) {
   const storage = getClientStorage();
   const db = getClientFirestore();

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
-import { listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
+import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
 
@@ -35,15 +35,39 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [error, setError] = useState("");
   const [manuscriptText, setManuscriptText] = useState("");
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
+  const [manuscriptSourceHint, setManuscriptSourceHint] = useState("");
   const attemptedAutoImport = useRef(false);
 
-  async function findUploadedManuscript(targetBookId: string) {
-    const materials = await listMaterials(targetBookId);
-    const manuscript = materials.find(isLikelyManuscript);
-    if (!manuscript) return null;
+  async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
+    const directMaterials = await listMaterials(targetBookId);
+    const directManuscript = directMaterials.find(isLikelyManuscript);
+    if (directManuscript) {
+      return {
+        material: directManuscript,
+        sourceBookId: targetBookId,
+        sourceBookTitle: targetBookTitle ?? "",
+        text: await readMaterialText(directManuscript),
+      };
+    }
+
+    if (!targetBookTitle) return null;
+
+    const [books, allMaterials] = await Promise.all([listBooks(), listAllMaterials()]);
+    const matchingBookIds = new Set(
+      books
+        .filter((entry) => entry.title.trim().toLowerCase() === targetBookTitle.trim().toLowerCase())
+        .map((entry) => entry.id),
+    );
+
+    const fallbackMaterial = allMaterials.find((material) => matchingBookIds.has(material.book_id) && isLikelyManuscript(material));
+    if (!fallbackMaterial) return null;
+
+    const sourceBook = books.find((entry) => entry.id === fallbackMaterial.book_id);
     return {
-      name: manuscript.name,
-      text: await readMaterialText(manuscript),
+      material: fallbackMaterial,
+      sourceBookId: fallbackMaterial.book_id,
+      sourceBookTitle: sourceBook?.title ?? targetBookTitle,
+      text: await readMaterialText(fallbackMaterial),
     };
   }
 
@@ -73,6 +97,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       setBook(currentBook);
       setScenes(studioScenes);
       setActiveSceneId((current) => current || studioScenes[0]?.id || "");
+      setManuscriptSourceHint("");
       if (currentBook?.notes?.startsWith("MANUSCRIPT::")) {
         setManuscriptText(currentBook.notes.slice("MANUSCRIPT::".length));
       }
@@ -95,10 +120,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     attemptedAutoImport.current = true;
     (async () => {
       try {
-        const uploaded = await findUploadedManuscript(book.id);
+        const uploaded = await findUploadedManuscript(book.id, book.title);
         if (!uploaded?.text.trim()) return;
-        setManuscriptSourceName(uploaded.name);
-        await buildScenes(uploaded.text, uploaded.name);
+        setManuscriptSourceName(uploaded.material.name);
+        setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
+        await buildScenes(uploaded.text, uploaded.material.name);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not turn the uploaded manuscript into scenes.");
       }
@@ -127,9 +153,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (!book) return;
     setImporting(true);
     try {
-      const uploaded = await findUploadedManuscript(book.id);
+      const uploaded = await findUploadedManuscript(book.id, book.title);
       if (!uploaded?.text.trim()) throw new Error("No uploaded manuscript text file was found for this book yet.");
-      await buildScenes(uploaded.text, uploaded.name);
+      setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
+      await buildScenes(uploaded.text, uploaded.material.name);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build scenes from the uploaded manuscript.");
@@ -203,6 +230,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
             <p className="muted">Paste text here, or pull from the uploaded manuscript file for this book. The Listening Room will split it into 3 to 5 minute production scenes inside this same app.</p>
             {manuscriptSourceName && (
               <p className="muted">Linked manuscript file: <strong>{manuscriptSourceName}</strong></p>
+            )}
+            {manuscriptSourceHint && (
+              <p className="muted">{manuscriptSourceHint}</p>
             )}
             <textarea
               className="studio-manuscript"
