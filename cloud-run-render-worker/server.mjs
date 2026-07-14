@@ -215,7 +215,7 @@ const server = http.createServer(async (request, response) => {
     return json(response, 400, { ok: false, error: "Missing request URL." });
   }
 
-  if (request.method === "GET" && request.url === "/healthz") {
+  if (request.method === "GET" && (request.url === "/" || request.url === "/healthz")) {
     return json(response, 200, {
       ok: true,
       service: "the-listening-room-render-worker",
