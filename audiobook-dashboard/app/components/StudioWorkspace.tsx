@@ -278,7 +278,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       sceneTitle: activeScene.title,
     });
     setRenderJob(job);
-    setSceneStatus(nextId ? `Scene queued for rendering. Moving to the next scene.` : `Scene queued for rendering.`);
+    try {
+      const response = await fetch("/api/render/process", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof payload?.error === "string" ? payload.error : "The render worker could not process the queue.");
+      }
+      setSceneStatus(nextId ? `Scene queued and handed to the render worker. Moving to the next scene.` : `Scene queued and handed to the render worker.`);
+    } catch (err) {
+      setSceneStatus(err instanceof Error ? `Scene queued, but the render worker did not start: ${err.message}` : "Scene queued, but the render worker did not start.");
+    }
     if (nextId) {
       setActiveSceneId(nextId);
       setTab("script");
