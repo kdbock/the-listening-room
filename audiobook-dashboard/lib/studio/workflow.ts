@@ -76,6 +76,7 @@ function extractSpeakers(text: string): StudioSpeaker[] {
   return Array.from(counts.entries()).map(([name, line_count], index) => ({
     name,
     line_count,
+    character_type: "",
     recommended_voice: "",
     approved_voice: "",
     gender: inferSpeakerGender(text, name),

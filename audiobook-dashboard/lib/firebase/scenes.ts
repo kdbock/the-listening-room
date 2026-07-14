@@ -14,6 +14,7 @@ import { getClientFirestore } from "./client";
 export type StudioSpeaker = {
   name: string;
   line_count: number;
+  character_type?: string;
   recommended_voice: string;
   approved_voice: string;
   gender?: "feminine" | "masculine" | "unknown";

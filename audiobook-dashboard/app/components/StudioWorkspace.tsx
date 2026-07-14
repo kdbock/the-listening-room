@@ -33,6 +33,24 @@ const speakerVoiceTypes: Array<{ value: string; label: string; detail: string; g
   { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker", gender: "neutral" },
 ];
 
+const characterTypes: Array<{
+  value: string;
+  label: string;
+  detail: string;
+  gender: "feminine" | "masculine" | "neutral";
+  voice: string;
+}> = [
+  { value: "warm_grounded_feminine", label: "Warm grounded feminine", detail: "Steady, practical, emotionally present", gender: "feminine", voice: "tamsin_voice" },
+  { value: "bright_direct_feminine", label: "Bright direct feminine", detail: "Clear, alert, forward, sincere", gender: "feminine", voice: "orra_voice" },
+  { value: "weathered_low_feminine", label: "Weathered low feminine", detail: "Calm, dry, mature, controlled", gender: "feminine", voice: "ressa_voice" },
+  { value: "guarded_quick_feminine", label: "Guarded quick feminine", detail: "Wiry, defensive, fast, witty", gender: "feminine", voice: "nix_voice" },
+  { value: "very_low_feminine", label: "Very low feminine", detail: "Sparse, grounded, forceful contralto", gender: "feminine", voice: "flint_voice" },
+  { value: "protective_older_masculine", label: "Protective older masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "warm_adult_masculine", label: "Warm adult masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "polished_dangerous_masculine", label: "Polished dangerous masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "narrator_neutral", label: "Narrator / neutral", detail: "Use the narrator voice for this type", gender: "neutral", voice: "narrator_voice" },
+];
+
 const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
 
 function voiceTypeLabel(value: string) {
@@ -41,6 +59,10 @@ function voiceTypeLabel(value: string) {
   if (value === "female_voice_3") return "Ressa";
   if (value === "male_voice_1") return "Flint";
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
+}
+
+function characterTypeLabel(value?: string) {
+  return characterTypes.find((option) => option.value === value)?.label || "No character type";
 }
 
 function canonicalVoiceValue(value: string) {
@@ -189,12 +211,30 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
         return {
           approved_voice: voiceCompatibleWithGender(speaker.approved_voice, gender) ? canonicalVoiceValue(speaker.approved_voice) : "",
+          character_type: speaker.character_type,
           gender,
           color: speaker.color,
         };
       }
     }
     return null;
+  }
+
+  function bookTypeMemory(typeValue?: string) {
+    if (!typeValue) return null;
+    for (const scene of scenes) {
+      const speaker = scene.speakers.find((entry) => entry.character_type === typeValue && entry.approved_voice);
+      if (speaker) return {
+        approved_voice: canonicalVoiceValue(speaker.approved_voice),
+        gender: speaker.gender || inferSpeakerGender(scene, speaker.name),
+      };
+    }
+    return null;
+  }
+
+  function characterTypeOptionsForSpeaker(speaker: StudioSpeaker) {
+    const gender = speaker.gender || "unknown";
+    return characterTypes.filter((option) => gender === "unknown" || option.gender === gender || option.gender === "neutral");
   }
 
   function voiceOptionsForSpeaker(speaker: StudioSpeaker) {
@@ -709,15 +749,56 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     await Promise.all(changedScenes.map((scene) => saveScene(scene)));
   }
 
+  async function updateSpeakerCharacterTypeForBook(speakerName: string, typeValue: string) {
+    if (!activeScene) return;
+    const lowerName = speakerName.toLowerCase();
+    const type = characterTypes.find((option) => option.value === typeValue);
+    const remembered = bookTypeMemory(typeValue);
+    const nextScenes = scenes.map((scene) => {
+      const hasSpeaker = scene.speakers.some((speaker) => speaker.name.toLowerCase() === lowerName);
+      if (!hasSpeaker) return scene;
+      return {
+        ...scene,
+        speakers: scene.speakers.map((speaker) => {
+          if (speaker.name.toLowerCase() !== lowerName) return speaker;
+          const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
+          const typeVoice = type?.voice || remembered?.approved_voice || "";
+          const approvedVoice = voiceCompatibleWithGender(typeVoice, gender) ? canonicalVoiceValue(typeVoice) : "";
+          return {
+            ...speaker,
+            character_type: typeValue || "",
+            approved_voice: approvedVoice,
+            recommended_voice: "",
+            gender,
+            status: "recommended" as const,
+          };
+        }),
+        approvals: { ...scene.approvals, voice: true },
+        final_mix_status: scene.final_mix_status === "voices_approved" ? "draft" as const : scene.final_mix_status,
+      };
+    });
+    setScenes(nextScenes);
+    setSceneStatus(typeValue ? `Saved ${speakerName} as ${characterTypeLabel(typeValue)} for this book.` : `Cleared ${speakerName}'s character type.`);
+    const changedScenes = nextScenes.filter((scene, index) => scene !== scenes[index] && !scene.id.startsWith("preview-"));
+    await Promise.all(changedScenes.map((scene) => saveScene(scene)));
+  }
+
   async function identifySpeakers() {
     if (!activeScene) return;
     const existingByName = new Map(activeScene.speakers.map((speaker) => [speaker.name.toLowerCase(), speaker]));
-    const detectedSpeakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => ({
-      ...speaker,
-      gender: existingByName.get(speaker.name.toLowerCase())?.gender || speaker.gender || inferSpeakerGender(activeScene, speaker.name),
-      approved_voice: canonicalVoiceValue(existingByName.get(speaker.name.toLowerCase())?.approved_voice || bookSpeakerMemory(speaker.name)?.approved_voice || ""),
-      color: existingByName.get(speaker.name.toLowerCase())?.color || speaker.color || speakerColors[index % speakerColors.length],
-    }));
+    const detectedSpeakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => {
+      const existing = existingByName.get(speaker.name.toLowerCase());
+      const speakerMemory = bookSpeakerMemory(speaker.name);
+      const characterType = existing?.character_type || speakerMemory?.character_type || "";
+      const typeMemory = bookTypeMemory(characterType);
+      return {
+        ...speaker,
+        character_type: characterType,
+        gender: existing?.gender || speaker.gender || inferSpeakerGender(activeScene, speaker.name),
+        approved_voice: canonicalVoiceValue(existing?.approved_voice || speakerMemory?.approved_voice || typeMemory?.approved_voice || ""),
+        color: existing?.color || speaker.color || speakerColors[index % speakerColors.length],
+      };
+    });
     const speakers = [
       ...detectedSpeakers,
       ...activeScene.speakers
@@ -749,6 +830,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     const nextSpeaker: StudioSpeaker = {
       name,
       line_count: 0,
+      character_type: "",
       recommended_voice: "",
       approved_voice: bookSpeakerMemory(name)?.approved_voice || "",
       gender: inferSpeakerGender(activeScene, name),
@@ -1333,11 +1415,27 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           <div>
                             <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
                             <small>
-                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to assign selected text
+                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {characterTypeLabel(speaker.character_type)} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to assign selected text
                               {speaker.gender === "masculine" ? " · no masculine local voice installed yet" : ""}
                             </small>
                           </div>
                           <div className="studio-list">
+                            <select
+                              aria-label={`Character type for ${speaker.name}`}
+                              value={speaker.character_type || ""}
+                              onChange={(event) => {
+                                event.stopPropagation();
+                                updateSpeakerCharacterTypeForBook(speaker.name, event.target.value);
+                              }}
+                              onClick={(event) => event.stopPropagation()}
+                            >
+                              <option value="">Choose character type…</option>
+                              {characterTypeOptionsForSpeaker(speaker).map((option) => (
+                                <option key={`${speaker.name}-${option.value}`} value={option.value}>
+                                  {option.label} — {option.detail}
+                                </option>
+                              ))}
+                            </select>
                             <select
                               aria-label={`Voice type for ${speaker.name}`}
                               value={canonicalVoiceValue(speaker.approved_voice)}
