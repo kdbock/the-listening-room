@@ -8,6 +8,7 @@ import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord 
 import { deleteRenderJob, getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript, recommendAmbienceCues, recommendSfxCues, recommendSpeakersForEpisode } from "@/lib/studio/workflow";
 import { deleteScene, listScenes, replaceScenes, saveScene, type SceneRecord, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
+import { listVoicePatterns, saveVoicePattern, type VoicePattern } from "@/lib/firebase/voicePatterns";
 import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
@@ -33,7 +34,7 @@ const speakerVoiceTypes: Array<{ value: string; label: string; detail: string; g
   { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker", gender: "neutral" },
 ];
 
-const characterTypes: Array<{
+const starterCharacterTypes: Array<{
   value: string;
   label: string;
   detail: string;
@@ -59,10 +60,6 @@ function voiceTypeLabel(value: string) {
   if (value === "female_voice_3") return "Ressa";
   if (value === "male_voice_1") return "Flint";
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
-}
-
-function characterTypeLabel(value?: string) {
-  return characterTypes.find((option) => option.value === value)?.label || "No character type";
 }
 
 function canonicalVoiceValue(value: string) {
@@ -124,10 +121,17 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
   const [manuscriptSourceHint, setManuscriptSourceHint] = useState("");
   const [manualSpeakerName, setManualSpeakerName] = useState("");
+  const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedDialogueText, setSelectedDialogueText] = useState("");
   const [selectedDialogueRange, setSelectedDialogueRange] = useState<{ start: number; end: number } | null>(null);
   const attemptedAutoImport = useRef(false);
+
+  const characterTypes = voicePatterns.length ? voicePatterns : starterCharacterTypes;
+
+  function characterTypeLabel(value?: string) {
+    return characterTypes.find((option) => option.value === value)?.label || "No character type";
+  }
 
   function approval(scene: SceneRecord | null, key: "script" | "voice" | "draft" | "sfx" | "music") {
     return Boolean(scene?.approvals?.[key]);
@@ -488,10 +492,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   async function loadWorkspace() {
     setLoading(true);
     try {
-      const [books, studioScenes] = await Promise.all([listBooks(), listScenes(bookId)]);
+      const [books, studioScenes, patterns] = await Promise.all([listBooks(), listScenes(bookId), listVoicePatterns()]);
       const currentBook = books.find((entry) => entry.id === bookId) ?? null;
       setBook(currentBook);
       setScenes(studioScenes);
+      setVoicePatterns(patterns);
       setActiveSceneId((current) => current || studioScenes[0]?.id || "");
       setManuscriptSourceHint("");
       if (currentBook?.notes?.startsWith("MANUSCRIPT::")) {
@@ -1056,6 +1061,18 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     });
   }
 
+  function updateVoicePatternDraft(patternValue: string, updates: Partial<VoicePattern>) {
+    setVoicePatterns((current) => current.map((pattern) => (
+      pattern.value === patternValue ? { ...pattern, ...updates } : pattern
+    )));
+  }
+
+  async function persistVoicePattern(pattern: VoicePattern) {
+    const saved = await saveVoicePattern(pattern);
+    setVoicePatterns((current) => current.map((entry) => entry.value === saved.value ? saved : entry));
+    setSceneStatus(`Saved voice pattern: ${saved.label}.`);
+  }
+
   async function refreshSfxSuggestions() {
     if (!activeScene) return;
     const existingChoices = activeScene.sfx_cues.filter((cue) => cue.approved || cue.reason === "Added manually in the studio.");
@@ -1284,6 +1301,112 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <div className="actions">
                       <button className="button primary" onClick={saveNarratorNotes}>Save narration choice</button>
                       <button className="button" onClick={approveNarratorStage}>Approve narrator → identify speakers</button>
+                    </div>
+                    <div className="dialogue-line-editor">
+                      <div className="speaker-text-head">
+                        <div>
+                          <strong>Reusable voice pattern library</strong>
+                          <small>Design character types once, then assign names to these types across books. Reference WAVs can be added later.</small>
+                        </div>
+                      </div>
+                      {voicePatterns.map((pattern) => (
+                        <details className="studio-details" key={pattern.value}>
+                          <summary>{pattern.label} · {pattern.gender} · {pattern.accent || "No accent set"}</summary>
+                          <div className="dialogue-line-row">
+                            <label>
+                              Pattern name
+                              <input
+                                value={pattern.label}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { label: event.target.value })}
+                              />
+                            </label>
+                            <label>
+                              Gender / presentation
+                              <select
+                                value={pattern.gender}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { gender: event.target.value as VoicePattern["gender"] })}
+                              >
+                                <option value="feminine">Feminine</option>
+                                <option value="masculine">Masculine</option>
+                                <option value="neutral">Neutral</option>
+                              </select>
+                            </label>
+                            <label>
+                              Installed reference voice
+                              <select
+                                value={pattern.voice}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { voice: event.target.value })}
+                              >
+                                <option value="">No usable reference yet</option>
+                                {speakerVoiceTypes.map((option) => (
+                                  <option key={`${pattern.value}-${option.value}`} value={option.value}>
+                                    {option.label} — {option.detail}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Age feel
+                              <input
+                                value={pattern.age_feel}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { age_feel: event.target.value })}
+                                placeholder="Adult, older adult, young adult…"
+                              />
+                            </label>
+                            <label>
+                              Accent / dialect flavor
+                              <textarea
+                                value={pattern.accent}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { accent: event.target.value })}
+                                placeholder="Neutral American, subtle Southern softness, light British formality…"
+                              />
+                            </label>
+                            <label>
+                              Personality
+                              <textarea
+                                value={pattern.personality}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { personality: event.target.value })}
+                                placeholder="Guarded, warm, dangerous, anxious, playful, formal…"
+                              />
+                            </label>
+                            <label>
+                              Delivery rules
+                              <textarea
+                                value={pattern.delivery}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { delivery: event.target.value })}
+                                placeholder="Pace, pauses, diction, how anger/questions/tenderness sound…"
+                              />
+                            </label>
+                            <label>
+                              Avoid
+                              <textarea
+                                value={pattern.avoid}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { avoid: event.target.value })}
+                                placeholder="No cartoon accents, no melodrama, no breathless speed…"
+                              />
+                            </label>
+                            <label>
+                              Reference audio path
+                              <input
+                                value={pattern.reference_audio_path}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { reference_audio_path: event.target.value })}
+                                placeholder="local-narrator/voice-approved/..."
+                              />
+                            </label>
+                            <label>
+                              Reference text
+                              <textarea
+                                value={pattern.reference_text}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { reference_text: event.target.value })}
+                                placeholder="Text spoken in the reference WAV"
+                              />
+                            </label>
+                          </div>
+                          <div className="actions">
+                            <button className="button primary" onClick={() => persistVoicePattern(pattern)}>Save voice pattern</button>
+                          </div>
+                        </details>
+                      ))}
                     </div>
                     {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>

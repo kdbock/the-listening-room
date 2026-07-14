@@ -4,6 +4,7 @@ export const firestoreCollections = {
   materials: "materials",
   sounds: "sounds",
   characters: "characters",
+  voicePatterns: "voice_patterns",
   voiceApprovals: "voice_approvals",
   soundEffectCues: "sfx_cues",
   musicCues: "music_cues",
