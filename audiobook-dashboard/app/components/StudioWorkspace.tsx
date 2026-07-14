@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
-import { listScenes, replaceScenes, saveScene, type SceneRecord } from "@/lib/firebase/scenes";
+import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
 
 type TabKey = "text" | "voices" | "sfx" | "ambience" | "render";
 
@@ -288,7 +288,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           <input
                             value={speaker.approved_voice}
                             onChange={(event) => {
-                              const speakers = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, status: "rejected" } : entry);
+                              const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, status: "rejected" as const } : entry);
                               setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
                             }}
                           />
