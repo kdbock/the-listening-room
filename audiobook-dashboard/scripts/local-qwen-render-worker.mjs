@@ -796,14 +796,15 @@ async function processOne() {
     const bundle = await loadBundle(job);
     const paths = buildNarratorPlan({ job, ...bundle });
     const python = process.env.LOCAL_QWEN_PYTHON || (fs.existsSync(defaultPython) ? defaultPython : "python3");
-    if (!fs.existsSync(paths.outputPath)) {
-      await runCommand(python, [
-        rendererPath,
-        "--plan", paths.planPath,
-        "--output", paths.outputPath,
-        "--segments-dir", paths.segmentsDir,
-      ], { cwd: projectDir });
-    }
+    if (fs.existsSync(paths.outputPath)) fs.unlinkSync(paths.outputPath);
+    const manifestPath = paths.outputPath.replace(/\.wav$/i, ".json");
+    if (fs.existsSync(manifestPath)) fs.unlinkSync(manifestPath);
+    await runCommand(python, [
+      rendererPath,
+      "--plan", paths.planPath,
+      "--output", paths.outputPath,
+      "--segments-dir", paths.segmentsDir,
+    ], { cwd: projectDir });
     const soundPlan = await buildSoundDesignPlan({ scene: bundle.scene, paths, python });
     await renderSoundDesign(paths, soundPlan);
     await completeJob(job, paths, soundPlan);

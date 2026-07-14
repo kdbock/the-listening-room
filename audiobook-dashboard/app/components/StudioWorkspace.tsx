@@ -206,6 +206,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return highlightedDialogueSegments(scene).filter((segment) => segment.missed || segment.speaker === "Unassigned").length;
   }
 
+  function dialogueLineSegments(scene: SceneRecord) {
+    return highlightedDialogueSegments(scene).filter((segment) => segment.speaker);
+  }
+
   async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
     const directMaterials = await listMaterials(targetBookId);
     const directManuscript = directMaterials.find(isLikelyManuscript);
@@ -645,6 +649,48 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSceneStatus(rangeIsValid ? `Updated episode text and assigned it to ${speaker.name}.` : `Assigned selected text to ${speaker.name}.`);
   }
 
+  async function saveDialogueLine(segment: { start: number; end: number; text: string; speaker?: string; color?: string }, speakerName: string, nextLineText: string) {
+    if (!activeScene || !speakerName || !nextLineText.trim()) return;
+    const speaker = activeScene.speakers.find((entry) => entry.name === speakerName);
+    if (!speaker) return;
+    const color = speaker.color || speakerColors[activeScene.speakers.findIndex((entry) => entry.name === speaker.name) % speakerColors.length];
+    const safeStart = Math.max(0, Math.min(segment.start, activeScene.text.length));
+    const safeEnd = Math.max(safeStart, Math.min(segment.end, activeScene.text.length));
+    const replacement = nextLineText.trim();
+    const nextText = `${activeScene.text.slice(0, safeStart)}${replacement}${activeScene.text.slice(safeEnd)}`;
+    const delta = replacement.length - (safeEnd - safeStart);
+    const assignment: StudioDialogueAssignment = {
+      id: `dialogue-${safeStart}-${Date.now()}`,
+      speaker: speaker.name,
+      text: replacement,
+      color,
+      start: safeStart,
+      end: safeStart + replacement.length,
+    };
+    const adjustedAssignments = (activeScene.dialogue_assignments ?? [])
+      .filter((entry) => {
+        if (typeof entry.start !== "number" || typeof entry.end !== "number") return !(entry.speaker === speaker.name && entry.text === replacement);
+        return !(entry.start < safeEnd && entry.end > safeStart);
+      })
+      .map((entry) => {
+        if (!delta || typeof entry.start !== "number" || typeof entry.end !== "number" || entry.start < safeEnd) return entry;
+        return { ...entry, start: entry.start + delta, end: entry.end + delta };
+      });
+    await updateScene({
+      ...activeScene,
+      text: nextText,
+      dialogue_assignments: [...adjustedAssignments, assignment],
+      speakers: activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, color } : entry),
+      approvals: { ...activeScene.approvals, voice: true },
+      final_mix_status: "draft",
+      render_job_status: "",
+      render_output_path: "",
+      render_sound_design_plan_path: "",
+      render_error_message: "",
+    });
+    setSceneStatus(`Saved dialogue line for ${speaker.name}.`);
+  }
+
   async function removeDialogueAssignment(assignmentId: string) {
     if (!activeScene) return;
     await updateScene({
@@ -1020,6 +1066,44 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           </div>
                         )}
                       </div>
+                    </div>
+                    <div className="dialogue-line-editor">
+                      <div className="speaker-text-head">
+                        <div>
+                          <strong>Dialogue lines to render</strong>
+                          <small>These rows are the render source for character voices. Fix the speaker or wording here before approving voices.</small>
+                        </div>
+                      </div>
+                      {dialogueLineSegments(activeScene).length ? dialogueLineSegments(activeScene).map((segment, index) => (
+                        <div className={`dialogue-line-row ${segment.missed || segment.speaker === "Unassigned" ? "needs-speaker" : ""}`} key={`${segment.start}-${segment.end}-${index}`}>
+                          <label>
+                            Speaker
+                            <select
+                              defaultValue={segment.speaker === "Unassigned" ? "" : segment.speaker}
+                              onChange={(event) => saveDialogueLine(segment, event.target.value, segment.text)}
+                            >
+                              <option value="">Choose speaker…</option>
+                              {activeScene.speakers.map((speaker) => (
+                                <option key={`line-${index}-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            Line text
+                            <textarea
+                              defaultValue={segment.text}
+                              onBlur={(event) => {
+                                const speakerName = segment.speaker === "Unassigned" ? "" : segment.speaker || "";
+                                if (speakerName && event.target.value.trim() !== segment.text.trim()) {
+                                  saveDialogueLine(segment, speakerName, event.target.value);
+                                }
+                              }}
+                            />
+                          </label>
+                        </div>
+                      )) : (
+                        <p className="materials-empty">No quoted dialogue was found in this episode yet.</p>
+                      )}
                     </div>
                     <div className="studio-list">
                       {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
