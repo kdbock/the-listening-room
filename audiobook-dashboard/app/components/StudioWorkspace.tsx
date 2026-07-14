@@ -196,6 +196,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return segments;
   }
 
+  function unassignedDialogueCount(scene: SceneRecord | null) {
+    if (!scene) return 0;
+    return highlightedDialogueSegments(scene).filter((segment) => segment.missed || segment.speaker === "Unassigned").length;
+  }
+
   async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
     const directMaterials = await listMaterials(targetBookId);
     const directManuscript = directMaterials.find(isLikelyManuscript);
@@ -471,6 +476,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function approveVoices() {
     if (!activeScene) return;
+    const unassigned = unassignedDialogueCount(activeScene);
+    if (unassigned) {
+      setSceneStatus(`Assign ${unassigned} unassigned highlighted quote${unassigned === 1 ? "" : "s"} before approving voices.`);
+      return;
+    }
     const missing = activeScene.speakers.filter((speaker) => speaker.name !== "Unassigned" && !speaker.approved_voice);
     if (missing.length) {
       setSceneStatus(`Choose a voice type for ${missing.map((speaker) => speaker.name).join(", ")} before approving.`);
@@ -534,15 +544,20 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (selected) setSelectedDialogueText(selected);
   }
 
-  async function assignSelectedTextToSpeaker() {
-    if (!activeScene || !selectedSpeakerName || !selectedDialogueText.trim()) return;
-    const speaker = activeScene.speakers.find((entry) => entry.name === selectedSpeakerName);
+  async function assignSelectedTextToSpeaker(speakerName = selectedSpeakerName) {
+    if (!activeScene) return;
+    const selected = selectedDialogueText.trim() || window.getSelection()?.toString().trim() || "";
+    if (!speakerName || !selected) {
+      setSceneStatus("Select the text first, then click the speaker.");
+      return;
+    }
+    const speaker = activeScene.speakers.find((entry) => entry.name === speakerName);
     if (!speaker) return;
     const color = speaker.color || speakerColors[activeScene.speakers.findIndex((entry) => entry.name === speaker.name) % speakerColors.length];
     const assignment: StudioDialogueAssignment = {
       id: `dialogue-${Date.now()}`,
       speaker: speaker.name,
-      text: selectedDialogueText.trim(),
+      text: selected,
       color,
     };
     const existingAssignments = activeScene.dialogue_assignments ?? [];
@@ -554,6 +569,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       final_mix_status: "draft",
     });
     setSelectedDialogueText("");
+    setSelectedSpeakerName(speaker.name);
     window.getSelection()?.removeAllRanges();
     setSceneStatus(`Assigned selected text to ${speaker.name}.`);
   }
@@ -854,16 +870,19 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "characters" && (
                   <>
-                    <p className="muted">Identify the speaking parts in this episode, then choose the voice type yourself. The app will not assign character voices automatically.</p>
+                    <p className="muted">Identify speakers, select any missed or incorrect dialogue in the text, then click the speaker to assign it. You cannot move forward while yellow unassigned quotes remain.</p>
                     <div className="actions">
                       <button className="button" onClick={identifySpeakers}>Identify speakers in this episode</button>
+                      {unassignedDialogueCount(activeScene) > 0 && (
+                        <span className="studio-warning">{unassignedDialogueCount(activeScene)} unassigned quote{unassignedDialogueCount(activeScene) === 1 ? "" : "s"}</span>
+                      )}
                     </div>
                     <div className="speaker-review-layout">
                       <div className="speaker-text-card">
                         <div className="speaker-text-head">
                           <div>
                             <strong>Episode text</strong>
-                            <small>Select missed dialogue, choose a speaker, then assign it.</small>
+                            <small>Select text here, then click a speaker chip or speaker card.</small>
                           </div>
                           <button className="button ghost" onClick={captureSelectedDialogueText}>Use selected text</button>
                         </div>
@@ -885,15 +904,6 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         </div>
                         <div className="speaker-assignment-tools">
                           <label>
-                            Assign selected text to
-                            <select value={selectedSpeakerName} onChange={(event) => setSelectedSpeakerName(event.target.value)}>
-                              <option value="">Choose speaker…</option>
-                              {activeScene.speakers.map((speaker) => (
-                                <option key={`assign-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
                             Selected text
                             <textarea
                               value={selectedDialogueText}
@@ -901,9 +911,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               placeholder="Select dialogue above, or paste missed text here."
                             />
                           </label>
-                          <button className="button primary" disabled={!selectedSpeakerName || !selectedDialogueText.trim()} onClick={assignSelectedTextToSpeaker}>
-                            Assign text
-                          </button>
+                          <small>Click a speaker below to assign this text.</small>
                         </div>
                       </div>
                       <div className="speaker-side-card">
@@ -914,10 +922,15 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         </div>
                         <div className="speaker-legend">
                           {activeScene.speakers.map((speaker, index) => (
-                            <span key={`legend-${speaker.name}`}>
+                            <button
+                              type="button"
+                              className={`speaker-chip ${selectedSpeakerName === speaker.name ? "active" : ""}`}
+                              key={`legend-${speaker.name}`}
+                              onClick={() => assignSelectedTextToSpeaker(speaker.name)}
+                            >
                               <i style={{ backgroundColor: speakerColor(speaker, index) }} />
                               {speaker.name}
-                            </span>
+                            </button>
                           ))}
                           <span><i className="missed-swatch" /> Unassigned quote</span>
                         </div>
@@ -937,19 +950,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     </div>
                     <div className="studio-list">
                       {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
-                        <div className="studio-row" key={`${speaker.name}-${index}`}>
+                        <div className="studio-row speaker-pick-row" key={`${speaker.name}-${index}`} onClick={() => assignSelectedTextToSpeaker(speaker.name)}>
                           <div>
                             <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
-                            <small>{speaker.line_count} lines · {voiceTypeLabel(speaker.approved_voice)}</small>
+                            <small>{speaker.line_count} lines · {voiceTypeLabel(speaker.approved_voice)} · click card to assign selected text</small>
                           </div>
                           <div className="studio-list">
                             <select
                               aria-label={`Voice type for ${speaker.name}`}
                               value={speaker.approved_voice}
                               onChange={(event) => {
+                                event.stopPropagation();
                                 const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, recommended_voice: "", status: "recommended" as const } : entry);
                                 setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
                               }}
+                              onClick={(event) => event.stopPropagation()}
                             >
                               <option value="">Choose voice type…</option>
                               {speakerVoiceTypes.map((option) => (
@@ -963,7 +978,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                 <button
                                   key={`${speaker.name}-${option.value}`}
                                   className={`button ghost ${speaker.approved_voice === option.value ? "selected" : ""}`}
-                                  onClick={() => {
+                                  onClick={(event) => {
+                                    event.stopPropagation();
                                     const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: option.value, recommended_voice: "", status: "recommended" as const } : entry);
                                     setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
                                   }}
@@ -977,7 +993,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       )) : <p className="materials-empty">No speakers have been identified for this episode yet.</p>}
                     </div>
                     <div className="actions">
-                      <button className="button primary" onClick={approveVoices}>Approve voices → sound effects</button>
+                      <button className="button primary" disabled={unassignedDialogueCount(activeScene) > 0} onClick={approveVoices}>Approve voices → sound effects</button>
                     </div>
                     {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
