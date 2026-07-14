@@ -27,6 +27,8 @@ export type StudioDialogueAssignment = {
   color: string;
   start?: number;
   end?: number;
+  source?: "detected" | "manual";
+  confidence?: "high" | "low";
 };
 
 export type StudioCue = {

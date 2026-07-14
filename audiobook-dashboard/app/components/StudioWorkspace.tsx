@@ -39,6 +39,10 @@ function speakerColor(speaker: StudioSpeaker, index: number) {
   return speaker.color || speakerColors[index % speakerColors.length];
 }
 
+function stripDialogueQuotes(value: string) {
+  return value.trim().replace(/^[“”"]+/, "").replace(/[“”"]+$/, "").trim();
+}
+
 function isLikelyManuscript(material: MaterialRecord) {
   const lowerName = material.name.toLowerCase();
   return material.category === "Manuscript"
@@ -134,6 +138,30 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return first ? speakers.get(first)?.name || "" : "";
   }
 
+  function nearestKnownSpeaker(scene: SceneRecord, text: string, pronoun?: string) {
+    const speakers = scene.speakers.filter((speaker) => speaker.name !== "Unassigned");
+    const lowerPronoun = pronoun?.toLowerCase() || "";
+    const candidates = speakers
+      .filter((speaker) => {
+        const name = speaker.name.toLowerCase();
+        const voice = speaker.approved_voice.toLowerCase();
+        if (lowerPronoun === "he" || lowerPronoun === "his") {
+          return voice.includes("male") || ["gregory", "greg", "john", "michael", "david"].some((known) => name.includes(known));
+        }
+        if (lowerPronoun === "she" || lowerPronoun === "her") {
+          return voice.includes("female") || ["kimberly", "megan", "meg", "kristy", "sarah"].some((known) => name.includes(known));
+        }
+        return true;
+      })
+      .map((speaker) => {
+        const firstName = speaker.name.split(/\s+/)[0] || speaker.name;
+        return { speaker, position: text.toLowerCase().lastIndexOf(firstName.toLowerCase()) };
+      })
+      .filter((entry) => entry.position >= 0)
+      .sort((left, right) => right.position - left.position);
+    return candidates[0]?.speaker.name || "";
+  }
+
   function inferQuoteSpeaker(scene: SceneRecord, quoteStart: number, quoteEnd: number) {
     const text = scene.text;
     const before = text.slice(Math.max(0, quoteStart - 140), quoteStart);
@@ -146,7 +174,39 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (afterNameVerb) return knownSpeaker(scene, afterNameVerb[1]);
     const beforeNameVerb = new RegExp(`${namePattern}\\s+(?:${verbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
     if (beforeNameVerb) return knownSpeaker(scene, beforeNameVerb[1]);
+    const afterPronounVerb = new RegExp(`^\\s*[,.!?—–-]*\\s*(he|she)\\s+(?:${verbs})\\b`, "i").exec(after);
+    if (afterPronounVerb) return nearestKnownSpeaker(scene, before, afterPronounVerb[1]);
+    const beforePronounVerb = new RegExp(`\\b(he|she)\\s+(?:${verbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
+    if (beforePronounVerb) return nearestKnownSpeaker(scene, before, beforePronounVerb[1]);
     return "";
+  }
+
+  function buildDetectedDialogueAssignments(scene: SceneRecord, speakers: StudioSpeaker[]) {
+    const sceneWithSpeakers = { ...scene, speakers };
+    return Array.from(scene.text.matchAll(/[“"]([^”"]+)[”"]/g)).map((match, index) => {
+      const start = match.index ?? 0;
+      const end = start + match[0].length;
+      const speakerName = inferQuoteSpeaker(sceneWithSpeakers, start, end);
+      const speakerIndex = speakers.findIndex((speaker) => speaker.name === speakerName);
+      const speaker = speakerIndex >= 0 ? speakers[speakerIndex] : null;
+      return {
+        id: `quote-${index + 1}-${start}`,
+        speaker: speaker?.name || "Unassigned",
+        text: stripDialogueQuotes(match[1]),
+        color: speaker ? speakerColor(speaker, speakerIndex) : "#fff3bd",
+        start,
+        end,
+        source: "detected" as const,
+        confidence: speaker ? "high" as const : "low" as const,
+      };
+    });
+  }
+
+  function assignmentsOverlap(left: StudioDialogueAssignment, right: StudioDialogueAssignment) {
+    if (typeof left.start !== "number" || typeof left.end !== "number" || typeof right.start !== "number" || typeof right.end !== "number") {
+      return false;
+    }
+    return left.start < right.end && right.start < left.end;
   }
 
   function highlightedDialogueSegments(scene: SceneRecord) {
@@ -506,19 +566,29 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   async function identifySpeakers() {
     if (!activeScene) return;
     const existingByName = new Map(activeScene.speakers.map((speaker) => [speaker.name.toLowerCase(), speaker]));
-    const speakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => ({
+    const detectedSpeakers = recommendSpeakersForEpisode(activeScene.text).map((speaker, index) => ({
       ...speaker,
       approved_voice: existingByName.get(speaker.name.toLowerCase())?.approved_voice || "",
       color: existingByName.get(speaker.name.toLowerCase())?.color || speaker.color || speakerColors[index % speakerColors.length],
     }));
+    const speakers = [
+      ...detectedSpeakers,
+      ...activeScene.speakers
+        .filter((speaker) => speaker.name !== "Unassigned" && !detectedSpeakers.some((detected) => detected.name.toLowerCase() === speaker.name.toLowerCase()))
+        .map((speaker, index) => ({ ...speaker, color: speaker.color || speakerColors[(detectedSpeakers.length + index) % speakerColors.length] })),
+    ];
+    const preservedAssignments = (activeScene.dialogue_assignments ?? []).filter((assignment) => assignment.source === "manual" || assignment.id.startsWith("dialogue-"));
+    const detectedAssignments = buildDetectedDialogueAssignments(activeScene, speakers)
+      .filter((assignment) => !preservedAssignments.some((preserved) => assignmentsOverlap(assignment, preserved)));
     await updateScene({
       ...activeScene,
       speakers,
+      dialogue_assignments: [...detectedAssignments, ...preservedAssignments],
       approvals: { ...activeScene.approvals, voice: true },
       final_mix_status: "draft",
     });
     setSceneStatus(speakers.length
-      ? `Identified ${speakers.length} likely speaker${speakers.length === 1 ? "" : "s"} for this episode.`
+      ? `Identified ${speakers.length} speaker${speakers.length === 1 ? "" : "s"} and prepared ${detectedAssignments.length} dialogue row${detectedAssignments.length === 1 ? "" : "s"}.`
       : "No named speakers were found in this episode. You can still approve narration and continue.");
   }
 
@@ -617,6 +687,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       color,
       start: assignmentStart,
       end: assignmentEnd,
+      source: "manual",
+      confidence: "high",
     };
     const existingAssignments = activeScene.dialogue_assignments ?? [];
     const adjustedAssignments = existingAssignments
@@ -666,6 +738,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       color,
       start: safeStart,
       end: safeStart + replacement.length,
+      source: "manual",
+      confidence: "high",
     };
     const adjustedAssignments = (activeScene.dialogue_assignments ?? [])
       .filter((entry) => {

@@ -285,6 +285,14 @@ function inferQuoteSpeaker({ before, after, speakerByName }) {
   return "";
 }
 
+function cleanSpokenText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^[“”"]+/, "")
+    .replace(/[“”"]+$/, "")
+    .trim();
+}
+
 function buildNarrationUnits({ text, speakers, assignments, bank }) {
   const approvedSpeakers = (Array.isArray(speakers) ? speakers : [])
     .filter((speaker) => speaker.name && speaker.name !== "Unassigned")
@@ -297,14 +305,15 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     .filter((assignment) => assignment.speaker && assignment.text)
     .map((assignment) => ({
       speaker: String(assignment.speaker),
-      text: String(assignment.text).trim(),
+      text: cleanSpokenText(assignment.text),
       start: Number.isFinite(Number(assignment.start)) ? Number(assignment.start) : null,
       end: Number.isFinite(Number(assignment.end)) ? Number(assignment.end) : null,
-    }));
+    }))
+    .filter((assignment) => assignment.text);
   const fallbackDialogueSpeaker = approvedSpeakers.length === 1 ? approvedSpeakers[0] : null;
   const quotePattern = /[“"]([^”"]+)[”"]/g;
   const ranges = [];
-  let quoteIndex = 0;
+  const hasExplicitAssignments = manualAssignments.length > 0;
 
   function referenceForSpeaker(speakerName) {
     return speakerByName.get(String(speakerName || "").toLowerCase()) || null;
@@ -317,7 +326,7 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
         ranges.push({
           start: Math.max(0, assignment.start),
           end: Math.min(text.length, assignment.end),
-          text: text.slice(Math.max(0, assignment.start), Math.min(text.length, assignment.end)).trim() || assignment.text,
+          text: cleanSpokenText(text.slice(Math.max(0, assignment.start), Math.min(text.length, assignment.end))) || assignment.text,
           speaker,
         });
       }
@@ -330,7 +339,7 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
         ranges.push({
           start,
           end: start + assignment.text.length,
-          text: assignment.text,
+          text: cleanSpokenText(assignment.text),
           speaker,
         });
       }
@@ -342,18 +351,18 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     const start = match.index || 0;
     const end = start + match[0].length;
     if (ranges.some((range) => start < range.end && end > range.start)) continue;
+    if (hasExplicitAssignments) continue;
 
     const before = text.slice(Math.max(0, start - 140), start);
     const after = text.slice(end, end + 140);
-    const manualSpeaker = manualAssignments.find((assignment) => match[1].trim() === assignment.text || match[1].includes(assignment.text) || assignment.text.includes(match[1].trim()))?.speaker || "";
+    const quoteText = cleanSpokenText(match[1]);
+    const manualSpeaker = manualAssignments.find((assignment) => quoteText === assignment.text || quoteText.includes(assignment.text) || assignment.text.includes(quoteText))?.speaker || "";
     const speakerName = manualSpeaker || inferQuoteSpeaker({ before, after, speakerByName });
     const speaker = (speakerName && speakerByName.get(speakerName.toLowerCase()))
       || fallbackDialogueSpeaker
-      || approvedSpeakers[quoteIndex % Math.max(approvedSpeakers.length, 1)]
       || null;
 
-    if (speaker) ranges.push({ start, end, text: match[1].trim(), speaker });
-    quoteIndex += 1;
+    if (speaker) ranges.push({ start, end, text: quoteText, speaker });
   }
 
   ranges.sort((left, right) => left.start - right.start || right.end - left.end);
