@@ -102,6 +102,7 @@ export default function Dashboard() {
   const [books, setBooks] = useState<Book[]>([]);
   const [selected, setSelected] = useState<Book | null>(null);
   const [workspaceBook, setWorkspaceBook] = useState<Book | null>(null);
+  const [studioBook, setStudioBook] = useState<Book | null>(null);
   const [filter, setFilter] = useState("All books");
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(true);
@@ -172,10 +173,12 @@ export default function Dashboard() {
   function openBook(book: Book) {
     if (book.is_active) {
       setWorkspaceBook({ ...book });
+      setStudioBook(null);
       setSelected(null);
     } else {
       setSelected({ ...book });
       setWorkspaceBook(null);
+      setStudioBook(null);
     }
     setMaterials([]);
     loadMaterials(book.id);
@@ -242,6 +245,17 @@ export default function Dashboard() {
     setShowSounds(true);
     loadSounds();
     if (!archiveIndex && !archiveLoading) loadArchiveIndex();
+  }
+
+  function openStudio(book: Book) {
+    setStudioBook({ ...book });
+    setWorkspaceBook(null);
+    setSelected(null);
+    setShowSounds(false);
+    setMaterials([]);
+    loadMaterials(book.id);
+    if (!archiveIndex && !archiveLoading) loadArchiveIndex();
+    loadSounds();
   }
 
   async function uploadSound(file: File) {
@@ -465,7 +479,77 @@ export default function Dashboard() {
             <button className="button ghost" onClick={openSoundLibrary}>Open sound library</button>
             <div>
               <button className="button ghost" onClick={() => setWorkspaceBook(null)}>Back to shelf</button>
-              <button className="button primary" onClick={() => { setSelected({ ...workspaceBook }); setWorkspaceBook(null); }}>Open full record</button>
+              <button className="button primary" onClick={() => openStudio(workspaceBook)}>Open studio</button>
+            </div>
+          </div>
+        </section>
+      </div>}
+
+      {studioBook && <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) setStudioBook(null); }}>
+        <section className="modal studio-modal" role="dialog" aria-modal="true" aria-labelledby="studio-title">
+          <div className="modal-head">
+            <div>
+              <p className="eyebrow">Studio</p>
+              <h2 id="studio-title">{studioBook.title}</h2>
+            </div>
+            <button className="close" onClick={() => setStudioBook(null)} aria-label="Close">×</button>
+          </div>
+          <div className="studio-grid">
+            <section className="materials studio-panel">
+              <div className="materials-head">
+                <div><p className="eyebrow">Book setup</p><h3>Project materials</h3></div>
+                <span>{materials.length} {materials.length === 1 ? "file" : "files"}</span>
+              </div>
+              <p className="materials-empty studio-note">Use this side for the manuscript, notes, reference audio, and exports you want open while you work on this book.</p>
+              <div className="upload-row">
+                <label>File type<select value={materialCategory} onChange={(e) => setMaterialCategory(e.target.value)}>{materialCategories.map((category) => <option key={category}>{category}</option>)}</select></label>
+                <label className={`upload-button ${uploading ? "disabled" : ""}`}>
+                  <input key={fileInputKey} type="file" disabled={uploading} onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadMaterial(file); }} />
+                  {uploading ? "Storing file…" : "＋ Choose a file"}
+                </label>
+              </div>
+              {materialsLoading ? <p className="materials-empty">Opening stored materials…</p> : materials.length ? (
+                <ul className="material-list">{materials.map((material) => <li key={material.id}>
+                  <span className="file-badge">{material.category.slice(0, 1)}</span>
+                  <span className="file-details"><strong>{material.name}</strong><small>{material.category} · {formatBytes(material.size)} · {new Date(material.created_at).toLocaleDateString()}</small></span>
+                  <a href={`/api/materials?id=${encodeURIComponent(material.id)}`} aria-label={`Download ${material.name}`}>Download</a>
+                  <button type="button" onClick={() => deleteMaterial(material)} aria-label={`Remove ${material.name}`}>Remove</button>
+                </li>)}</ul>
+              ) : <p className="materials-empty">No files stored yet. Start by adding the manuscript for this book so it always lives here.</p>}
+            </section>
+
+            <section className="materials studio-panel">
+              <div className="materials-head">
+                <div><p className="eyebrow">Sound search</p><h3>Find the right sounds</h3></div>
+                <span>{archiveIndex ? `${archiveIndex.total} indexed` : "raw library"}</span>
+              </div>
+              <p className="materials-empty studio-note">Search your Adobe and Sonniss libraries here, then save promising matches into `Import next` while you shape this book.</p>
+              <div className="archive-tools">
+                <label className="search archive-search"><span>⌕</span><input value={archiveSearch} onChange={(e) => setArchiveSearch(e.target.value)} placeholder="Try church bells, rain, grief, city, footsteps…" aria-label="Search your sound archive" /></label>
+                <label className="archive-filter">Type<select value={archiveKind} onChange={(e) => setArchiveKind(e.target.value)}>{archiveKinds.map((kind) => <option key={kind}>{kind}</option>)}</select></label>
+              </div>
+              {archiveQueue.length ? <>
+                <div className="sound-shelf-head queue-head"><h3>Import next</h3><span>{archiveQueue.length} saved</span></div>
+                <ul className="archive-list queue-list">{archiveQueue.map((item) => <li key={item.id}>
+                  <div className="archive-title"><span className="file-badge">★</span><span><strong>{item.name}</strong><small>{item.kind} · {item.source}{item.pack ? ` · ${item.pack}` : ""}</small></span></div>
+                  <div className="archive-path"><span>{item.relativePath}</span></div>
+                  <div className="archive-actions"><button type="button" onClick={() => removeQueuedArchiveSound(item.id)}>Remove</button></div>
+                </li>)}</ul>
+              </> : null}
+              {archiveLoading ? <p className="materials-empty">Opening your raw sound archive…</p> : archiveIndex ? (
+                archiveMatches.length ? <ul className="archive-list">{archiveMatches.map((item) => <li key={item.id}>
+                  <div className="archive-title"><span className="file-badge">♪</span><span><strong>{item.name}</strong><small>{item.kind} · {item.source}{item.pack ? ` · ${item.pack}` : ""}</small></span></div>
+                  <div className="archive-path"><span>{item.relativePath}</span></div>
+                  <div className="archive-actions">{archiveQueue.some((queued) => queued.id === item.id) ? <span>Saved</span> : <button type="button" onClick={() => queueArchiveSound(item)}>Import next</button>}</div>
+                </li>)}</ul> : <p className="materials-empty">No archive sounds matched that search yet. Try a simpler word like rain, bell, church, whisper, wind, train, or radio.</p>
+              ) : <p className="materials-empty">The archive index is not ready yet.</p>}
+            </section>
+          </div>
+          <div className="modal-foot">
+            <button className="button ghost" onClick={openSoundLibrary}>Open full sound library</button>
+            <div>
+              <button className="button ghost" onClick={() => setStudioBook(null)}>Back to workroom</button>
+              <button className="button primary" onClick={() => { setSelected({ ...studioBook }); setStudioBook(null); }}>Open full record</button>
             </div>
           </div>
         </section>
