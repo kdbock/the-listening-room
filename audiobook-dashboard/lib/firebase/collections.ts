@@ -1,6 +1,8 @@
 export const firestoreCollections = {
   books: "books",
   scenes: "scenes",
+  materials: "materials",
+  sounds: "sounds",
   characters: "characters",
   voiceApprovals: "voice_approvals",
   soundEffectCues: "sfx_cues",

@@ -3,31 +3,26 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { createBook, listBooks, saveBook as persistBook, type FirestoreBook } from "@/lib/firebase/books";
+import {
+  deleteMaterialFile,
+  downloadMaterialUrl,
+  listMaterials,
+  uploadMaterialFile,
+  type MaterialRecord,
+} from "@/lib/firebase/materials";
+import {
+  deleteSoundFile,
+  downloadSoundUrl,
+  listSounds,
+  uploadSoundFile,
+  type SoundDraft,
+  type SoundRecord,
+} from "@/lib/firebase/sounds";
 
 type Book = FirestoreBook;
 
-type Material = {
-  id: string;
-  book_id: string;
-  name: string;
-  category: string;
-  content_type: string;
-  size: number;
-  created_at: string;
-};
-
-type Sound = {
-  id: string;
-  name: string;
-  category: string;
-  content_type: string;
-  size: number;
-  source_url: string;
-  license: string;
-  attribution: string;
-  notes: string;
-  created_at: string;
-};
+type Material = MaterialRecord;
+type Sound = SoundRecord;
 
 type ArchiveSound = {
   id: string;
@@ -90,16 +85,18 @@ export default function Dashboard() {
   const [newTitle, setNewTitle] = useState("");
   const [error, setError] = useState("");
   const [materials, setMaterials] = useState<Material[]>([]);
+  const [materialUrls, setMaterialUrls] = useState<Record<string, string>>({});
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [materialCategory, setMaterialCategory] = useState("Manuscript");
   const [fileInputKey, setFileInputKey] = useState(0);
   const [showSounds, setShowSounds] = useState(false);
   const [sounds, setSounds] = useState<Sound[]>([]);
+  const [soundUrls, setSoundUrls] = useState<Record<string, string>>({});
   const [soundsLoading, setSoundsLoading] = useState(false);
   const [soundUploading, setSoundUploading] = useState(false);
   const [soundInputKey, setSoundInputKey] = useState(0);
-  const [soundDraft, setSoundDraft] = useState({ category: "Sound effect", sourceUrl: "", license: "", attribution: "", notes: "" });
+  const [soundDraft, setSoundDraft] = useState<SoundDraft>({ category: "Sound effect", sourceUrl: "", license: "", attribution: "", notes: "" });
   const [archiveIndex, setArchiveIndex] = useState<ArchiveIndex | null>(null);
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveSearch, setArchiveSearch] = useState("");
@@ -137,9 +134,8 @@ export default function Dashboard() {
   async function loadMaterials(bookId: string) {
     setMaterialsLoading(true);
     try {
-      const response = await fetch(`/api/materials?bookId=${encodeURIComponent(bookId)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not open this book's files.");
-      setMaterials(await response.json());
+      setMaterials(await listMaterials(bookId));
+      setMaterialUrls({});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open this book's files.");
     } finally {
@@ -162,12 +158,7 @@ export default function Dashboard() {
     if (!currentBook) return;
     setUploading(true);
     try {
-      const response = await fetch(`/api/materials?bookId=${encodeURIComponent(currentBook.id)}&category=${encodeURIComponent(materialCategory)}`, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "application/octet-stream", "X-File-Name": encodeURIComponent(file.name), "X-File-Size": String(file.size) },
-        body: file,
-      });
-      if (!response.ok) throw new Error("That file could not be stored.");
+      await uploadMaterialFile(currentBook.id, materialCategory, file);
       await loadMaterials(currentBook.id);
       setFileInputKey((key) => key + 1);
       setError("");
@@ -181,17 +172,20 @@ export default function Dashboard() {
   async function deleteMaterial(material: Material) {
     const currentBook = selected;
     if (!currentBook || !window.confirm(`Remove “${material.name}” from this book?`)) return;
-    const response = await fetch(`/api/materials?id=${encodeURIComponent(material.id)}`, { method: "DELETE" });
-    if (!response.ok) { setError("That file could not be removed."); return; }
+    try {
+      await deleteMaterialFile(material);
+    } catch {
+      setError("That file could not be removed.");
+      return;
+    }
     await loadMaterials(currentBook.id);
   }
 
   async function loadSounds() {
     setSoundsLoading(true);
     try {
-      const response = await fetch("/api/sounds", { cache: "no-store" });
-      if (!response.ok) throw new Error("Could not open the sound library.");
-      setSounds(await response.json());
+      setSounds(await listSounds());
+      setSoundUrls({});
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open the sound library.");
@@ -223,13 +217,7 @@ export default function Dashboard() {
   async function uploadSound(file: File) {
     setSoundUploading(true);
     try {
-      const params = new URLSearchParams(soundDraft);
-      const response = await fetch(`/api/sounds?${params}`, {
-        method: "POST",
-        headers: { "Content-Type": file.type || "audio/mpeg", "X-File-Name": encodeURIComponent(file.name), "X-File-Size": String(file.size) },
-        body: file,
-      });
-      if (!response.ok) throw new Error("That sound could not be stored.");
+      await uploadSoundFile(file, soundDraft);
       await loadSounds();
       setSoundInputKey((key) => key + 1);
       setSoundDraft({ ...soundDraft, sourceUrl: "", license: "", attribution: "", notes: "" });
@@ -242,10 +230,46 @@ export default function Dashboard() {
 
   async function deleteSound(sound: Sound) {
     if (!window.confirm(`Remove “${sound.name}” from the sound library?`)) return;
-    const response = await fetch(`/api/sounds?id=${encodeURIComponent(sound.id)}`, { method: "DELETE" });
-    if (!response.ok) { setError("That sound could not be removed."); return; }
+    try {
+      await deleteSoundFile(sound);
+    } catch {
+      setError("That sound could not be removed.");
+      return;
+    }
     await loadSounds();
   }
+
+  useEffect(() => {
+    let active = true;
+    if (!materials.length) return;
+    (async () => {
+      const entries = await Promise.all(materials.map(async (material) => {
+        try {
+          return [material.id, await downloadMaterialUrl(material)] as const;
+        } catch {
+          return [material.id, ""] as const;
+        }
+      }));
+      if (active) setMaterialUrls(Object.fromEntries(entries.filter(([, url]) => url)));
+    })();
+    return () => { active = false; };
+  }, [materials]);
+
+  useEffect(() => {
+    let active = true;
+    if (!sounds.length) return;
+    (async () => {
+      const entries = await Promise.all(sounds.map(async (sound) => {
+        try {
+          return [sound.id, await downloadSoundUrl(sound)] as const;
+        } catch {
+          return [sound.id, ""] as const;
+        }
+      }));
+      if (active) setSoundUrls(Object.fromEntries(entries.filter(([, url]) => url)));
+    })();
+    return () => { active = false; };
+  }, [sounds]);
 
   function queueArchiveSound(sound: ArchiveSound) {
     setArchiveQueue((current) => current.some((item) => item.id === sound.id) ? current : [sound, ...current]);
@@ -429,7 +453,7 @@ export default function Dashboard() {
               <ul className="material-list">{materials.map((material) => <li key={material.id}>
                 <span className="file-badge">{material.category.slice(0, 1)}</span>
                 <span className="file-details"><strong>{material.name}</strong><small>{material.category} · {formatBytes(material.size)} · {new Date(material.created_at).toLocaleDateString()}</small></span>
-                <a href={`/api/materials?id=${encodeURIComponent(material.id)}`} aria-label={`Download ${material.name}`}>Download</a>
+                {materialUrls[material.id] ? <a href={materialUrls[material.id]} target="_blank" rel="noreferrer" aria-label={`Download ${material.name}`}>Download</a> : <span>Preparing…</span>}
                 <button type="button" onClick={() => deleteMaterial(material)} aria-label={`Remove ${material.name}`}>Remove</button>
               </li>)}</ul>
             ) : <p className="materials-empty">No files stored yet. Add the manuscript, a voice reference, audio, or any other material you want kept with this book.</p>}
@@ -478,9 +502,9 @@ export default function Dashboard() {
           <div className="sound-shelf-head"><h3>Your collection</h3><span>{sounds.length} {sounds.length === 1 ? "sound" : "sounds"}</span></div>
           {soundsLoading ? <p className="materials-empty">Opening your sound library…</p> : sounds.length ? <ul className="sound-list">{sounds.map((sound) => <li key={sound.id}>
             <div className="sound-title"><span className="file-badge">♫</span><span><strong>{sound.name}</strong><small>{sound.category} · {formatBytes(sound.size)}{sound.license ? ` · ${sound.license}` : " · License not recorded"}</small></span></div>
-            <audio controls preload="none" src={`/api/sounds?id=${encodeURIComponent(sound.id)}`} />
+            <audio controls preload="none" src={soundUrls[sound.id] || undefined} />
             <div className="sound-meta">{sound.attribution && <span>Credit: {sound.attribution}</span>}{sound.notes && <span>{sound.notes}</span>}{sound.source_url && <a href={sound.source_url} target="_blank" rel="noreferrer">View original source</a>}</div>
-            <div className="sound-actions"><a href={`/api/sounds?id=${encodeURIComponent(sound.id)}&download=1`}>Download</a><button type="button" onClick={() => deleteSound(sound)}>Remove</button></div>
+            <div className="sound-actions">{soundUrls[sound.id] ? <a href={soundUrls[sound.id]} target="_blank" rel="noreferrer">Download</a> : <span>Preparing…</span>}<button type="button" onClick={() => deleteSound(sound)}>Remove</button></div>
           </li>)}</ul> : <p className="materials-empty">Your sound library is empty. Add a free sound you have permission to use, along with its source and license.</p>}
         </section>
       </div>}

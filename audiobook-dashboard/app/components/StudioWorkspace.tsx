@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
+import { listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord } from "@/lib/firebase/scenes";
 
@@ -15,16 +16,6 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "ambience", label: "Ambience / music" },
   { key: "render", label: "Final mix" },
 ];
-
-type MaterialRecord = {
-  id: string;
-  book_id: string;
-  name: string;
-  category: string;
-  content_type: string;
-  size: number;
-  created_at: string;
-};
 
 function isLikelyManuscript(material: MaterialRecord) {
   const lowerName = material.name.toLowerCase();
@@ -47,16 +38,12 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const attemptedAutoImport = useRef(false);
 
   async function findUploadedManuscript(targetBookId: string) {
-    const response = await fetch(`/api/materials?bookId=${encodeURIComponent(targetBookId)}`, { cache: "no-store" });
-    if (!response.ok) throw new Error("Could not open this book's uploaded manuscript files.");
-    const materials = await response.json() as MaterialRecord[];
+    const materials = await listMaterials(targetBookId);
     const manuscript = materials.find(isLikelyManuscript);
     if (!manuscript) return null;
-    const fileResponse = await fetch(`/api/materials?id=${encodeURIComponent(manuscript.id)}`, { cache: "no-store" });
-    if (!fileResponse.ok) throw new Error(`Could not read ${manuscript.name}.`);
     return {
       name: manuscript.name,
-      text: await fileResponse.text(),
+      text: await readMaterialText(manuscript),
     };
   }
 
