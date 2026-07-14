@@ -26,11 +26,11 @@ const masculineNameHints = ["gregory", "greg", "john", "michael", "david", "dani
 const feminineNameHints = ["kimberly", "megan", "meg", "kristy", "sarah", "nix", "orra", "ressa", "tamsin", "lio", "vessa"];
 
 const speakerVoiceTypes: Array<{ value: string; label: string; detail: string; gender: "feminine" | "masculine" | "neutral" }> = [
-  { value: "orra_voice", label: "Orra", detail: "Clear high feminine mezzo", gender: "feminine" },
-  { value: "tamsin_voice", label: "Tamsin", detail: "Warm grounded feminine mezzo", gender: "feminine" },
-  { value: "ressa_voice", label: "Ressa", detail: "Weathered mid-low feminine alto", gender: "feminine" },
-  { value: "flint_voice", label: "Flint", detail: "Very low feminine contralto; not a male voice", gender: "feminine" },
-  { value: "nix_voice", label: "Nix", detail: "Wiry low feminine alto", gender: "feminine" },
+  { value: "orra_voice", label: "Young woman", detail: "Clear, bright, direct", gender: "feminine" },
+  { value: "tamsin_voice", label: "Middle-aged woman", detail: "Warm, grounded, practical", gender: "feminine" },
+  { value: "ressa_voice", label: "Older woman", detail: "Lower, dry, controlled", gender: "feminine" },
+  { value: "flint_voice", label: "Deep woman", detail: "Very low, forceful contralto", gender: "feminine" },
+  { value: "nix_voice", label: "Snarky woman", detail: "Quick, guarded, witty", gender: "feminine" },
   { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker", gender: "neutral" },
 ];
 
@@ -41,24 +41,27 @@ const starterCharacterTypes: Array<{
   gender: "feminine" | "masculine" | "neutral";
   voice: string;
 }> = [
-  { value: "warm_grounded_feminine", label: "Warm / grounded", detail: "Steady, practical, emotionally present", gender: "feminine", voice: "tamsin_voice" },
-  { value: "bright_direct_feminine", label: "Bright / direct", detail: "Clear, alert, forward, sincere", gender: "feminine", voice: "orra_voice" },
-  { value: "weathered_low_feminine", label: "Dry / controlled", detail: "Calm, dry, mature, controlled", gender: "feminine", voice: "ressa_voice" },
-  { value: "guarded_quick_feminine", label: "Snarky / quick", detail: "Wiry, defensive, fast, witty", gender: "feminine", voice: "nix_voice" },
-  { value: "very_low_feminine", label: "Low / forceful", detail: "Sparse, grounded, forceful contralto", gender: "feminine", voice: "flint_voice" },
-  { value: "protective_older_masculine", label: "Protective older", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
-  { value: "warm_adult_masculine", label: "Warm adult", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
-  { value: "polished_dangerous_masculine", label: "Polished danger", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
-  { value: "narrator_neutral", label: "Narrator / neutral", detail: "Use the narrator voice for this type", gender: "neutral", voice: "narrator_voice" },
+  { value: "older_woman", label: "Older woman", detail: "Mature, lower, controlled", gender: "feminine", voice: "ressa_voice" },
+  { value: "middle_aged_woman", label: "Middle-aged woman", detail: "Warm, grounded, practical", gender: "feminine", voice: "tamsin_voice" },
+  { value: "young_woman", label: "Young woman", detail: "Clear, bright, direct", gender: "feminine", voice: "orra_voice" },
+  { value: "teenage_woman", label: "Teenage woman", detail: "Quick, bright, emotionally immediate", gender: "feminine", voice: "orra_voice" },
+  { value: "snarky_woman", label: "Snarky woman", detail: "Fast, guarded, witty", gender: "feminine", voice: "nix_voice" },
+  { value: "deep_woman", label: "Deep woman", detail: "Very low, forceful contralto", gender: "feminine", voice: "flint_voice" },
+  { value: "older_man", label: "Older man", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "middle_aged_man", label: "Middle-aged man", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "young_man", label: "Young man", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "teenage_man", label: "Teenage man", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "neutral_narrator", label: "Neutral narrator", detail: "Use narrator voice", gender: "neutral", voice: "narrator_voice" },
+  { value: "neutral_androgynous", label: "Neutral / androgynous", detail: "Needs neutral reference WAV", gender: "neutral", voice: "" },
 ];
 
 const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#bfe3df", "#efc7dc"];
 
 function voiceTypeLabel(value: string) {
-  if (value === "female_voice_1") return "Orra";
-  if (value === "female_voice_2") return "Tamsin";
-  if (value === "female_voice_3") return "Ressa";
-  if (value === "male_voice_1") return "Flint";
+  if (value === "female_voice_1") return "Young woman";
+  if (value === "female_voice_2") return "Middle-aged woman";
+  if (value === "female_voice_3") return "Older woman";
+  if (value === "male_voice_1") return "Deep woman";
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
 }
 
