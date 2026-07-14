@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord } from "@/lib/firebase/scenes";
@@ -16,6 +16,24 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "render", label: "Final mix" },
 ];
 
+type MaterialRecord = {
+  id: string;
+  book_id: string;
+  name: string;
+  category: string;
+  content_type: string;
+  size: number;
+  created_at: string;
+};
+
+function isLikelyManuscript(material: MaterialRecord) {
+  const lowerName = material.name.toLowerCase();
+  return material.category === "Manuscript"
+    || material.content_type.startsWith("text/")
+    || lowerName.endsWith(".txt")
+    || lowerName.endsWith(".md");
+}
+
 export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [book, setBook] = useState<FirestoreBook | null>(null);
   const [scenes, setScenes] = useState<SceneRecord[]>([]);
@@ -25,6 +43,40 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [manuscriptText, setManuscriptText] = useState("");
+  const [manuscriptSourceName, setManuscriptSourceName] = useState("");
+  const attemptedAutoImport = useRef(false);
+
+  async function findUploadedManuscript(targetBookId: string) {
+    const response = await fetch(`/api/materials?bookId=${encodeURIComponent(targetBookId)}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Could not open this book's uploaded manuscript files.");
+    const materials = await response.json() as MaterialRecord[];
+    const manuscript = materials.find(isLikelyManuscript);
+    if (!manuscript) return null;
+    const fileResponse = await fetch(`/api/materials?id=${encodeURIComponent(manuscript.id)}`, { cache: "no-store" });
+    if (!fileResponse.ok) throw new Error(`Could not read ${manuscript.name}.`);
+    return {
+      name: manuscript.name,
+      text: await fileResponse.text(),
+    };
+  }
+
+  async function buildScenes(text: string, sourceName?: string) {
+    if (!book || !text.trim()) return;
+    const built = buildScenesFromManuscript(book.id, text);
+    await replaceScenes(book.id, built);
+    await saveBook({
+      ...book,
+      stage: "Manuscript prep",
+      progress: 15,
+      manuscript_ready: 1,
+      notes: `MANUSCRIPT::${text}`,
+      next_action: "Review scene text and approve the first voice recommendations.",
+    });
+    if (sourceName) setManuscriptSourceName(sourceName);
+    setManuscriptText(text);
+    await loadWorkspace();
+    setTab("text");
+  }
 
   async function loadWorkspace() {
     setLoading(true);
@@ -49,6 +101,23 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     loadWorkspace();
   }, [bookId]);
 
+  useEffect(() => {
+    if (loading || importing || attemptedAutoImport.current || scenes.length || !book) return;
+    if (manuscriptText.trim()) return;
+
+    attemptedAutoImport.current = true;
+    (async () => {
+      try {
+        const uploaded = await findUploadedManuscript(book.id);
+        if (!uploaded?.text.trim()) return;
+        setManuscriptSourceName(uploaded.name);
+        await buildScenes(uploaded.text, uploaded.name);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not turn the uploaded manuscript into scenes.");
+      }
+    })();
+  }, [book, scenes, loading, importing, manuscriptText]);
+
   const activeScene = useMemo(
     () => scenes.find((scene) => scene.id === activeSceneId) ?? scenes[0] ?? null,
     [activeSceneId, scenes],
@@ -58,20 +127,25 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     if (!book || !manuscriptText.trim()) return;
     setImporting(true);
     try {
-      const built = buildScenesFromManuscript(book.id, manuscriptText);
-      await replaceScenes(book.id, built);
-      await saveBook({
-        ...book,
-        stage: "Manuscript prep",
-        progress: 15,
-        notes: `MANUSCRIPT::${manuscriptText}`,
-        next_action: "Review scene text and approve the first voice recommendations.",
-      });
-      await loadWorkspace();
-      setTab("text");
+      await buildScenes(manuscriptText, manuscriptSourceName);
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build scenes from this manuscript.");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function importUploadedManuscript() {
+    if (!book) return;
+    setImporting(true);
+    try {
+      const uploaded = await findUploadedManuscript(book.id);
+      if (!uploaded?.text.trim()) throw new Error("No uploaded manuscript text file was found for this book yet.");
+      await buildScenes(uploaded.text, uploaded.name);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build scenes from the uploaded manuscript.");
     } finally {
       setImporting(false);
     }
@@ -139,7 +213,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         <aside className="studio-sidebar">
           <div className="card">
             <h2>Manuscript import</h2>
-            <p className="muted">Paste or drop in the book text here. The Listening Room will split it into 3 to 5 minute production scenes inside this same app.</p>
+            <p className="muted">Paste text here, or pull from the uploaded manuscript file for this book. The Listening Room will split it into 3 to 5 minute production scenes inside this same app.</p>
+            {manuscriptSourceName && (
+              <p className="muted">Linked manuscript file: <strong>{manuscriptSourceName}</strong></p>
+            )}
             <textarea
               className="studio-manuscript"
               value={manuscriptText}
@@ -147,6 +224,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
               placeholder="Paste the manuscript text here…"
             />
             <div className="actions">
+              <button className="button ghost" disabled={importing} onClick={importUploadedManuscript}>
+                {importing ? "Reading manuscript…" : "Use uploaded manuscript file"}
+              </button>
               <button className="button primary" disabled={importing || !manuscriptText.trim()} onClick={importManuscript}>
                 {importing ? "Building scenes…" : "Build scenes from manuscript"}
               </button>
