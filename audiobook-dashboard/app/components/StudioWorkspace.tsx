@@ -32,6 +32,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [tab, setTab] = useState<TabKey>("text");
   const [loading, setLoading] = useState(true);
   const [importing, setImporting] = useState(false);
+  const [savingSceneId, setSavingSceneId] = useState("");
+  const [sceneStatus, setSceneStatus] = useState("");
   const [error, setError] = useState("");
   const [manuscriptText, setManuscriptText] = useState("");
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
@@ -84,17 +86,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setActiveSceneId(previewScenes[0]?.id || "");
     setManuscriptText(text);
     if (sourceName) setManuscriptSourceName(sourceName);
+    setSceneStatus("");
     setTab("text");
-    await replaceScenes(book.id, built);
-    await saveBook({
+    const savedScenes = await replaceScenes(book.id, built);
+    setScenes(savedScenes);
+    setActiveSceneId(savedScenes[0]?.id || "");
+    const updatedBook = {
       ...book,
       stage: "Manuscript prep",
       progress: 15,
       manuscript_ready: 1,
       notes: `MANUSCRIPT::${text}`,
       next_action: "Review scene text and approve the first voice recommendations.",
-    });
-    await loadWorkspace();
+    };
+    await saveBook(updatedBook);
+    setBook(updatedBook);
   }
 
   async function loadWorkspace() {
@@ -129,10 +135,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     (async () => {
       try {
         const uploaded = await findUploadedManuscript(book.id, book.title);
-        if (!uploaded?.text.trim()) return;
-        setManuscriptSourceName(uploaded.material.name);
-        setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
-        await buildScenes(uploaded.text, uploaded.material.name);
+      if (!uploaded?.text.trim()) return;
+      setManuscriptText(uploaded.text);
+      setManuscriptSourceName(uploaded.material.name);
+      setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
+      await buildScenes(uploaded.text, uploaded.material.name);
       } catch (err) {
         setError(err instanceof Error ? err.message : "Could not turn the uploaded manuscript into scenes.");
       }
@@ -163,6 +170,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     try {
       const uploaded = await findUploadedManuscript(book.id, book.title);
       if (!uploaded?.text.trim()) throw new Error("No uploaded manuscript text file was found for this book yet.");
+      setManuscriptText(uploaded.text);
+      setManuscriptSourceName(uploaded.material.name);
       setManuscriptSourceHint(uploaded.sourceBookId !== book.id ? `Recovered from another "${uploaded.sourceBookTitle}" record.` : "");
       await buildScenes(uploaded.text, uploaded.material.name);
       setError("");
@@ -174,8 +183,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   }
 
   async function updateScene(scene: SceneRecord) {
+    if (scene.id.startsWith("preview-")) {
+      setSceneStatus("Your scenes are still finishing their first save. Give it a moment, then try again.");
+      return;
+    }
     setScenes((current) => current.map((entry) => (entry.id === scene.id ? scene : entry)));
-    await saveScene(scene);
+    setSavingSceneId(scene.id);
+    setSceneStatus("");
+    try {
+      await saveScene(scene);
+      setSceneStatus(`Saved ${scene.title}.`);
+    } catch (err) {
+      setSceneStatus(err instanceof Error ? err.message : "Could not save this scene yet.");
+    } finally {
+      setSavingSceneId("");
+    }
   }
 
   async function approveVoices() {
@@ -305,11 +327,17 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <textarea
                       className="studio-scene-text"
                       value={activeScene.text}
-                      onChange={(event) => setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, text: event.target.value } : scene))}
+                      onChange={(event) => {
+                        setSceneStatus("");
+                        setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, text: event.target.value } : scene));
+                      }}
                     />
                     <div className="actions">
-                      <button className="button primary" onClick={() => updateScene({ ...activeScene, text: activeScene.text })}>Save scene text</button>
+                      <button className="button primary" disabled={savingSceneId === activeScene.id || activeScene.id.startsWith("preview-")} onClick={() => updateScene({ ...activeScene, text: activeScene.text })}>
+                        {savingSceneId === activeScene.id ? "Saving scene…" : "Save scene text"}
+                      </button>
                     </div>
+                    {sceneStatus && <p className="muted">{sceneStatus}</p>}
                   </>
                 )}
 

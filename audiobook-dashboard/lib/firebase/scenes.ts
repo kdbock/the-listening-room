@@ -56,7 +56,7 @@ export async function listScenes(bookId: string): Promise<SceneRecord[]> {
     .sort((left, right) => left.scene_order - right.scene_order);
 }
 
-export async function replaceScenes(bookId: string, scenes: Omit<SceneRecord, "id" | "created_at" | "updated_at">[]) {
+export async function replaceScenes(bookId: string, scenes: Omit<SceneRecord, "id" | "created_at" | "updated_at">[]): Promise<SceneRecord[]> {
   const existing = await listScenes(bookId);
   const db = getClientFirestore();
 
@@ -64,14 +64,23 @@ export async function replaceScenes(bookId: string, scenes: Omit<SceneRecord, "i
     await deleteDoc(doc(db, firestoreCollections.scenes, scene.id));
   }
 
+  const savedScenes: SceneRecord[] = [];
   for (const scene of scenes) {
     const timestamp = nowIso();
-    await addDoc(collection(db, firestoreCollections.scenes), {
+    const created = await addDoc(collection(db, firestoreCollections.scenes), {
+      ...scene,
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    savedScenes.push({
+      id: created.id,
       ...scene,
       created_at: timestamp,
       updated_at: timestamp,
     });
   }
+
+  return savedScenes.sort((left, right) => left.scene_order - right.scene_order);
 }
 
 export async function saveScene(scene: SceneRecord) {
