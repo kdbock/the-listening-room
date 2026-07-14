@@ -27,6 +27,8 @@ export type StudioDialogueAssignment = {
   speaker: string;
   text: string;
   color: string;
+  tone?: string;
+  urgency?: "low" | "medium" | "high";
   start?: number;
   end?: number;
   source?: "detected" | "manual";

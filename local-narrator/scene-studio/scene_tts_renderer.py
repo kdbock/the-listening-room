@@ -149,9 +149,11 @@ def main() -> None:
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite {output}")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    units: list[tuple[str, bool, str, str, str]] = []
+    units: list[tuple[str, bool, str, str, str, str, str]] = []
     for planned in plan.get("units", []):
         paragraphs = [p.strip() for p in str(planned.get("text", "")).split("\n\n") if p.strip()]
+        tone = str(planned.get("tone", "")).strip()
+        urgency = str(planned.get("urgency", "")).strip()
         for paragraph in paragraphs:
             sentences = split_sentences(paragraph)
             render_sentences: list[tuple[str, bool]] = []
@@ -165,7 +167,7 @@ def main() -> None:
                     render_sentences.append((chunk, sentence_index == len(sentences) - 1 and chunk_index == len(chunks) - 1))
             units.extend((
                 sentence, ends_paragraph, str(planned["speaker"]),
-                str(planned["reference_audio"]), str(planned["reference_text"]),
+                str(planned["reference_audio"]), str(planned["reference_text"]), tone, urgency,
             ) for sentence, ends_paragraph in render_sentences)
     if not units:
         raise ValueError("No sentences were found in the approved scene text.")
@@ -175,7 +177,7 @@ def main() -> None:
     assembled: list[np.ndarray] = []
     sample_rate = 24000
     manifest_units = []
-    for index, (sentence, ends_paragraph, speaker, reference_audio, reference_text) in enumerate(units, start=1):
+    for index, (sentence, ends_paragraph, speaker, reference_audio, reference_text, tone, urgency) in enumerate(units, start=1):
         digest = hashlib.sha256(f"{speaker}\n{sentence}".encode("utf-8")).hexdigest()[:10]
         speaker_slug = re.sub(r"[^a-z0-9]+", "-", speaker.casefold()).strip("-")
         prefix = f"{index:04d}-{speaker_slug}-{digest}"
@@ -199,7 +201,7 @@ def main() -> None:
         if index == 1:
             pause_seconds = 0.95
         assembled.append(np.zeros(round(sample_rate * pause_seconds), dtype=np.int16))
-        manifest_units.append({"index": index, "speaker": speaker, "text": sentence, "asset": generated.name, "reused": reused, "ends_paragraph": ends_paragraph, "reference_audio": reference_audio})
+        manifest_units.append({"index": index, "speaker": speaker, "text": sentence, "tone": tone, "urgency": urgency, "asset": generated.name, "reused": reused, "ends_paragraph": ends_paragraph, "reference_audio": reference_audio})
     write_wav(output, np.concatenate(assembled), sample_rate)
     manifest = {
         "plan": str(plan_path), "source": plan.get("source_snapshot"), "output": str(output), "model": MODEL_ID,

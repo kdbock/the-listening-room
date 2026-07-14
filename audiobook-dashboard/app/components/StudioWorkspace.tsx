@@ -41,14 +41,14 @@ const starterCharacterTypes: Array<{
   gender: "feminine" | "masculine" | "neutral";
   voice: string;
 }> = [
-  { value: "warm_grounded_feminine", label: "Warm grounded feminine", detail: "Steady, practical, emotionally present", gender: "feminine", voice: "tamsin_voice" },
-  { value: "bright_direct_feminine", label: "Bright direct feminine", detail: "Clear, alert, forward, sincere", gender: "feminine", voice: "orra_voice" },
-  { value: "weathered_low_feminine", label: "Weathered low feminine", detail: "Calm, dry, mature, controlled", gender: "feminine", voice: "ressa_voice" },
-  { value: "guarded_quick_feminine", label: "Guarded quick feminine", detail: "Wiry, defensive, fast, witty", gender: "feminine", voice: "nix_voice" },
-  { value: "very_low_feminine", label: "Very low feminine", detail: "Sparse, grounded, forceful contralto", gender: "feminine", voice: "flint_voice" },
-  { value: "protective_older_masculine", label: "Protective older masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
-  { value: "warm_adult_masculine", label: "Warm adult masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
-  { value: "polished_dangerous_masculine", label: "Polished dangerous masculine", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "warm_grounded_feminine", label: "Warm / grounded", detail: "Steady, practical, emotionally present", gender: "feminine", voice: "tamsin_voice" },
+  { value: "bright_direct_feminine", label: "Bright / direct", detail: "Clear, alert, forward, sincere", gender: "feminine", voice: "orra_voice" },
+  { value: "weathered_low_feminine", label: "Dry / controlled", detail: "Calm, dry, mature, controlled", gender: "feminine", voice: "ressa_voice" },
+  { value: "guarded_quick_feminine", label: "Snarky / quick", detail: "Wiry, defensive, fast, witty", gender: "feminine", voice: "nix_voice" },
+  { value: "very_low_feminine", label: "Low / forceful", detail: "Sparse, grounded, forceful contralto", gender: "feminine", voice: "flint_voice" },
+  { value: "protective_older_masculine", label: "Protective older", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "warm_adult_masculine", label: "Warm adult", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
+  { value: "polished_dangerous_masculine", label: "Polished danger", detail: "Needs masculine reference WAV", gender: "masculine", voice: "" },
   { value: "narrator_neutral", label: "Narrator / neutral", detail: "Use the narrator voice for this type", gender: "neutral", voice: "narrator_voice" },
 ];
 
@@ -424,6 +424,15 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   function dialogueLineSegments(scene: SceneRecord) {
     return highlightedDialogueSegments(scene).filter((segment) => segment.speaker);
+  }
+
+  function assignmentForSegment(scene: SceneRecord, segment: { start: number; end: number; text: string; speaker?: string }) {
+    return (scene.dialogue_assignments ?? []).find((assignment) => {
+      if (typeof assignment.start === "number" && typeof assignment.end === "number") {
+        return assignment.start === segment.start && assignment.end === segment.end;
+      }
+      return assignment.speaker === segment.speaker && assignment.text.trim() === stripDialogueQuotes(segment.text);
+    });
   }
 
   async function findUploadedManuscript(targetBookId: string, targetBookTitle?: string | null) {
@@ -956,7 +965,12 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSceneStatus(rangeIsValid ? `Updated episode text and assigned it to ${speaker.name}.` : `Assigned selected text to ${speaker.name}.`);
   }
 
-  async function saveDialogueLine(segment: { start: number; end: number; text: string; speaker?: string; color?: string }, speakerName: string, nextLineText: string) {
+  async function saveDialogueLine(
+    segment: { start: number; end: number; text: string; speaker?: string; color?: string },
+    speakerName: string,
+    nextLineText: string,
+    performance: Pick<StudioDialogueAssignment, "tone" | "urgency"> = {},
+  ) {
     if (!activeScene || !speakerName || !nextLineText.trim()) return;
     const speaker = activeScene.speakers.find((entry) => entry.name === speakerName);
     if (!speaker) return;
@@ -964,6 +978,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     const safeStart = Math.max(0, Math.min(segment.start, activeScene.text.length));
     const safeEnd = Math.max(safeStart, Math.min(segment.end, activeScene.text.length));
     const replacement = nextLineText.trim();
+    const existingAssignment = assignmentForSegment(activeScene, segment);
     const nextText = `${activeScene.text.slice(0, safeStart)}${replacement}${activeScene.text.slice(safeEnd)}`;
     const delta = replacement.length - (safeEnd - safeStart);
     const assignment: StudioDialogueAssignment = {
@@ -973,6 +988,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       color,
       start: safeStart,
       end: safeStart + replacement.length,
+      tone: performance.tone ?? existingAssignment?.tone,
+      urgency: performance.urgency ?? existingAssignment?.urgency,
       source: "manual",
       confidence: "high",
     };
@@ -1501,34 +1518,72 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           <small>These rows are the render source for character voices. Fix the speaker or wording here before approving voices.</small>
                         </div>
                       </div>
-                      {dialogueLineSegments(activeScene).length ? dialogueLineSegments(activeScene).map((segment, index) => (
-                        <div className={`dialogue-line-row ${segment.missed || segment.speaker === "Unassigned" ? "needs-speaker" : ""}`} key={`${segment.start}-${segment.end}-${index}`}>
-                          <label>
-                            Speaker
-                            <select
-                              defaultValue={segment.speaker === "Unassigned" ? "" : segment.speaker}
-                              onChange={(event) => saveDialogueLine(segment, event.target.value, segment.text)}
-                            >
-                              <option value="">Choose speaker…</option>
-                              {activeScene.speakers.map((speaker) => (
-                                <option key={`line-${index}-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
-                              ))}
-                            </select>
-                          </label>
-                          <label>
-                            Line text
-                            <textarea
-                              defaultValue={segment.text}
-                              onBlur={(event) => {
-                                const speakerName = segment.speaker === "Unassigned" ? "" : segment.speaker || "";
-                                if (speakerName && event.target.value.trim() !== segment.text.trim()) {
-                                  saveDialogueLine(segment, speakerName, event.target.value);
-                                }
-                              }}
-                            />
-                          </label>
-                        </div>
-                      )) : (
+                      {dialogueLineSegments(activeScene).length ? dialogueLineSegments(activeScene).map((segment, index) => {
+                        const assignment = assignmentForSegment(activeScene, segment);
+                        const currentSpeaker = segment.speaker === "Unassigned" ? "" : segment.speaker || "";
+                        const currentTone = assignment?.tone || "";
+                        const currentUrgency = assignment?.urgency || "medium";
+                        return (
+                          <div className={`dialogue-line-row ${segment.missed || segment.speaker === "Unassigned" ? "needs-speaker" : ""}`} key={`${segment.start}-${segment.end}-${index}`}>
+                            <label>
+                              Speaker
+                              <select
+                                defaultValue={currentSpeaker}
+                                onChange={(event) => saveDialogueLine(segment, event.target.value, segment.text, { tone: currentTone, urgency: currentUrgency })}
+                              >
+                                <option value="">Choose speaker…</option>
+                                {activeScene.speakers.map((speaker) => (
+                                  <option key={`line-${index}-${speaker.name}`} value={speaker.name}>{speaker.name}</option>
+                                ))}
+                              </select>
+                            </label>
+                            <label>
+                              Tone
+                              <select
+                                defaultValue={currentTone}
+                                onChange={(event) => {
+                                  if (currentSpeaker) saveDialogueLine(segment, currentSpeaker, segment.text, { tone: event.target.value, urgency: currentUrgency });
+                                }}
+                              >
+                                <option value="">Default</option>
+                                <option value="dry">Dry</option>
+                                <option value="warm">Warm</option>
+                                <option value="snarky">Snarky</option>
+                                <option value="scared">Scared</option>
+                                <option value="angry">Angry</option>
+                                <option value="tender">Tender</option>
+                                <option value="teasing">Teasing</option>
+                                <option value="deadpan">Deadpan</option>
+                                <option value="urgent">Urgent</option>
+                              </select>
+                            </label>
+                            <label>
+                              Urgency
+                              <select
+                                defaultValue={currentUrgency}
+                                onChange={(event) => {
+                                  if (currentSpeaker) saveDialogueLine(segment, currentSpeaker, segment.text, { tone: currentTone, urgency: event.target.value as StudioDialogueAssignment["urgency"] });
+                                }}
+                              >
+                                <option value="low">Low</option>
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                              </select>
+                            </label>
+                            <label>
+                              Line text
+                              <textarea
+                                defaultValue={segment.text}
+                                onBlur={(event) => {
+                                  if (currentSpeaker && event.target.value.trim() !== segment.text.trim()) {
+                                    saveDialogueLine(segment, currentSpeaker, event.target.value, { tone: currentTone, urgency: currentUrgency });
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        );
+                      }) : (
                         <p className="materials-empty">No quoted dialogue was found in this episode yet.</p>
                       )}
                     </div>

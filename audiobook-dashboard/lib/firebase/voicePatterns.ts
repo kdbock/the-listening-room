@@ -33,7 +33,7 @@ export type VoicePattern = {
 const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_at">> = [
   {
     value: "warm_grounded_feminine",
-    label: "Warm grounded feminine",
+    label: "Warm / grounded",
     detail: "Steady, practical, emotionally present",
     gender: "feminine",
     voice: "tamsin_voice",
@@ -48,7 +48,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "bright_direct_feminine",
-    label: "Bright direct feminine",
+    label: "Bright / direct",
     detail: "Clear, alert, forward, sincere",
     gender: "feminine",
     voice: "orra_voice",
@@ -63,7 +63,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "weathered_low_feminine",
-    label: "Weathered low feminine",
+    label: "Dry / controlled",
     detail: "Calm, dry, mature, controlled",
     gender: "feminine",
     voice: "ressa_voice",
@@ -78,7 +78,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "guarded_quick_feminine",
-    label: "Guarded quick feminine",
+    label: "Snarky / quick",
     detail: "Wiry, defensive, fast, witty",
     gender: "feminine",
     voice: "nix_voice",
@@ -93,7 +93,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "very_low_feminine",
-    label: "Very low feminine",
+    label: "Low / forceful",
     detail: "Sparse, grounded, forceful contralto",
     gender: "feminine",
     voice: "flint_voice",
@@ -108,7 +108,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "protective_older_masculine",
-    label: "Protective older masculine",
+    label: "Protective older",
     detail: "Needs masculine reference WAV",
     gender: "masculine",
     voice: "",
@@ -123,7 +123,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "warm_adult_masculine",
-    label: "Warm adult masculine",
+    label: "Warm adult",
     detail: "Needs masculine reference WAV",
     gender: "masculine",
     voice: "",
@@ -138,7 +138,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
   },
   {
     value: "polished_dangerous_masculine",
-    label: "Polished dangerous masculine",
+    label: "Polished danger",
     detail: "Needs masculine reference WAV",
     gender: "masculine",
     voice: "",

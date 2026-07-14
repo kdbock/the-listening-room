@@ -320,6 +320,8 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     .map((assignment) => ({
       speaker: String(assignment.speaker),
       text: cleanSpokenText(assignment.text),
+      tone: String(assignment.tone || "").trim(),
+      urgency: String(assignment.urgency || "").trim(),
       start: Number.isFinite(Number(assignment.start)) ? Number(assignment.start) : null,
       end: Number.isFinite(Number(assignment.end)) ? Number(assignment.end) : null,
     }))
@@ -341,6 +343,8 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
           start: Math.max(0, assignment.start),
           end: Math.min(text.length, assignment.end),
           text: cleanSpokenText(text.slice(Math.max(0, assignment.start), Math.min(text.length, assignment.end))) || assignment.text,
+          tone: assignment.tone,
+          urgency: assignment.urgency,
           speaker,
         });
       }
@@ -354,6 +358,8 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
           start,
           end: start + assignment.text.length,
           text: cleanSpokenText(assignment.text),
+          tone: assignment.tone,
+          urgency: assignment.urgency,
           speaker,
         });
       }
@@ -396,6 +402,8 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     units.push({
       text: range.text,
       speaker: range.speaker.name,
+      tone: range.tone || "",
+      urgency: range.urgency || "",
       reference_audio: range.speaker.reference.audio,
       reference_text: range.speaker.reference.text,
     });
