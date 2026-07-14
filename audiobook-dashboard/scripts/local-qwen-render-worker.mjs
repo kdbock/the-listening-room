@@ -30,6 +30,8 @@ const soundLibraryRoot = path.join(projectDir, "Sound Library Downloads");
 const soundArchiveIndexPath = path.join(dashboardDir, "public", "sound-archive-index.json");
 const defaultPython = "/Users/kristykelly/.local/share/local-narration-studio/venv/bin/python";
 const defaultFfmpeg = "/Users/kristykelly/.local/share/local-narration-studio/bin/ffmpeg";
+const calibrationText = "The tide turned before dawn, and every promise came due.";
+const dialogueVerbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered";
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -102,6 +104,12 @@ function parseCueTime(value, fallbackIndex) {
 
 function dbToLinear(db) {
   return Math.pow(10, Number(db || 0) / 20);
+}
+
+function hashIndex(value, length) {
+  if (!length) return 0;
+  const digest = String(value || "").split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+  return Math.abs(digest) % length;
 }
 
 function inferTone(text) {
@@ -200,6 +208,139 @@ function writeText(filePath, text) {
   fs.writeFileSync(filePath, text, "utf8");
 }
 
+function existingFile(...parts) {
+  const filePath = path.join(...parts);
+  return fs.existsSync(filePath) ? filePath : "";
+}
+
+function voiceReferenceBank() {
+  return {
+    narrator: {
+      audio: path.join(localNarratorDir, "nix-voice-reference.wav"),
+      text: fs.existsSync(path.join(localNarratorDir, "nix-voice-reference.txt"))
+        ? fs.readFileSync(path.join(localNarratorDir, "nix-voice-reference.txt"), "utf8").trim()
+        : calibrationText,
+    },
+    women: [
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-auditions", "orra", "orra.v001.wav"),
+    ].filter(Boolean),
+    men: [
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav"),
+    ].filter(Boolean),
+    fallback: [
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav"),
+      existingFile(localNarratorDir, "voice-auditions", "orra", "orra.v001.wav"),
+    ].filter(Boolean),
+  };
+}
+
+function pickSpeakerReference(speaker, bank) {
+  const voice = String(speaker.approved_voice || speaker.recommended_voice || "").toLowerCase();
+  const name = String(speaker.name || "Speaker");
+  if (voice.includes("man") && !voice.includes("woman") && bank.men.length) {
+    return { audio: bank.men[hashIndex(name, bank.men.length)], text: calibrationText };
+  }
+  if ((voice.includes("woman") || voice.includes("alto") || voice.includes("mezzo")) && bank.women.length) {
+    return { audio: bank.women[hashIndex(`${name}:${voice}`, bank.women.length)], text: calibrationText };
+  }
+  if (bank.fallback.length) {
+    return { audio: bank.fallback[hashIndex(`${name}:${voice}`, bank.fallback.length)], text: calibrationText };
+  }
+  return bank.narrator;
+}
+
+function findKnownSpeaker(rawName, speakerByName) {
+  const name = String(rawName || "").trim();
+  if (!name) return "";
+  const direct = speakerByName.get(name.toLowerCase());
+  if (direct) return direct.name;
+  const first = name.split(/\s+/)[0]?.toLowerCase();
+  if (first && speakerByName.has(first)) return speakerByName.get(first).name;
+  return "";
+}
+
+function inferQuoteSpeaker({ before, after, speakerByName }) {
+  const namePattern = "([A-Z][a-zA-Z'’-]+(?:\\s+[A-Z][a-zA-Z'’-]+)?)";
+  const afterVerbName = new RegExp(`^\\s*[,.!?—–-]*\\s*(?:${dialogueVerbs})\\s+${namePattern}\\b`, "i").exec(after);
+  if (afterVerbName) return findKnownSpeaker(afterVerbName[1], speakerByName);
+  const afterNameVerb = new RegExp(`^\\s*[,.!?—–-]*\\s*${namePattern}\\s+(?:${dialogueVerbs})\\b`, "i").exec(after);
+  if (afterNameVerb) return findKnownSpeaker(afterNameVerb[1], speakerByName);
+  const beforeNameVerb = new RegExp(`${namePattern}\\s+(?:${dialogueVerbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
+  if (beforeNameVerb) return findKnownSpeaker(beforeNameVerb[1], speakerByName);
+  return "";
+}
+
+function buildNarrationUnits({ text, speakers, bank }) {
+  const approvedSpeakers = (Array.isArray(speakers) ? speakers : [])
+    .filter((speaker) => speaker.name && speaker.name !== "Unassigned")
+    .map((speaker) => ({
+      ...speaker,
+      reference: pickSpeakerReference(speaker, bank),
+    }));
+  const speakerByName = new Map(approvedSpeakers.map((speaker) => [String(speaker.name).toLowerCase(), speaker]));
+  const fallbackDialogueSpeaker = approvedSpeakers.length === 1 ? approvedSpeakers[0] : null;
+  const quotePattern = /[“"]([^”"]+)[”"]/g;
+  const units = [];
+  let cursor = 0;
+  let quoteIndex = 0;
+
+  for (const match of text.matchAll(quotePattern)) {
+    const narration = text.slice(cursor, match.index).trim();
+    if (narration) {
+      units.push({
+        text: narration,
+        speaker: "Narrator",
+        reference_audio: bank.narrator.audio,
+        reference_text: bank.narrator.text,
+      });
+    }
+
+    const before = text.slice(Math.max(0, match.index - 140), match.index);
+    const after = text.slice(match.index + match[0].length, match.index + match[0].length + 140);
+    const speakerName = inferQuoteSpeaker({ before, after, speakerByName });
+    const speaker = (speakerName && speakerByName.get(speakerName.toLowerCase()))
+      || fallbackDialogueSpeaker
+      || approvedSpeakers[quoteIndex % Math.max(approvedSpeakers.length, 1)]
+      || null;
+
+    units.push({
+      text: match[1].trim(),
+      speaker: speaker?.name || "Narrator",
+      reference_audio: speaker?.reference.audio || bank.narrator.audio,
+      reference_text: speaker?.reference.text || bank.narrator.text,
+    });
+    quoteIndex += 1;
+    cursor = match.index + match[0].length;
+  }
+
+  const tail = text.slice(cursor).trim();
+  if (tail) {
+    units.push({
+      text: tail,
+      speaker: "Narrator",
+      reference_audio: bank.narrator.audio,
+      reference_text: bank.narrator.text,
+    });
+  }
+
+  if (!units.length) {
+    units.push({
+      text,
+      speaker: "Narrator",
+      reference_audio: bank.narrator.audio,
+      reference_text: bank.narrator.text,
+    });
+  }
+
+  return units;
+}
+
 function runCommand(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
@@ -222,21 +363,26 @@ function runCommand(command, args, options = {}) {
   });
 }
 
-function renderOverlayStem({ ffmpeg, items, outputPath, gain }) {
+function renderOverlayStem({ ffmpeg, items, outputPath, gain, loopToSeconds = 0 }) {
   if (!items.length) return Promise.resolve(false);
   const args = ["-y", "-hide_banner", "-loglevel", "warning"];
-  for (const item of items) args.push("-i", item.asset.absolutePath);
+  for (const item of items) {
+    if (loopToSeconds) args.push("-stream_loop", "-1");
+    args.push("-i", item.asset.absolutePath);
+  }
   const filters = items.map((item, index) => {
     const delay = Math.max(0, Math.round(item.start_seconds * 1000));
     const itemGain = item.gain_linear || gain;
     const fadeIn = Math.max(0, Number(item.fade_in || 0));
     const fadeOut = Math.max(0, Number(item.fade_out || 0));
+    const trim = loopToSeconds ? `,atrim=0:${Math.max(1, loopToSeconds)}` : "";
     const fades = [
       fadeIn ? `afade=t=in:st=0:d=${fadeIn}` : "",
-      fadeOut ? `afade=t=out:st=3:d=${fadeOut}` : "",
+      fadeOut && loopToSeconds ? `afade=t=out:st=${Math.max(0, loopToSeconds - fadeOut)}:d=${fadeOut}` : "",
+      fadeOut && !loopToSeconds ? `afade=t=out:st=3:d=${fadeOut}` : "",
     ].filter(Boolean).join(",");
     const fadeFilter = fades ? `,${fades}` : "";
-    return `[${index}:a]aformat=sample_rates=48000:channel_layouts=stereo,volume=${itemGain}${fadeFilter},adelay=${delay}|${delay}[a${index}]`;
+    return `[${index}:a]aformat=sample_rates=48000:channel_layouts=stereo${trim},loudnorm=I=-23:TP=-2:LRA=11,volume=${itemGain}${fadeFilter},adelay=${delay}|${delay}[a${index}]`;
   });
   filters.push(`${items.map((_, index) => `[a${index}]`).join("")}amix=inputs=${items.length}:duration=longest:normalize=0,volume=1.0[out]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[out]", "-ac", "2", "-ar", "48000", outputPath);
@@ -274,6 +420,23 @@ function renderFinalMix({ ffmpeg, narrationPath, effectsPath, ambiencePath, outp
   filters.push(`${inputs.map((_, index) => `[a${index}]`).join("")}amix=inputs=${inputs.length}:duration=first:normalize=0[out]`);
   args.push("-filter_complex", filters.join(";"), "-map", "[out]", "-ac", "2", "-ar", "48000", outputPath);
   return runCommand(ffmpeg, args).then(() => true);
+}
+
+async function audioDurationSeconds(ffmpeg, filePath) {
+  const output = await runCommand(ffmpeg, [
+    "-hide_banner",
+    "-i", filePath,
+    "-f", "null",
+    "-",
+  ]).catch((error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    const match = message.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+    if (!match) throw error;
+    return message;
+  });
+  const match = output.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+  if (!match) return 0;
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
 }
 
 async function buildDesignerPlanWithLocalAi({ scene, cues, paths, python }) {
@@ -371,10 +534,8 @@ function buildNarratorPlan({ job, scene, book }) {
   const text = String(scene.text || "").trim();
   if (!text) throw new Error("Scene text is empty.");
 
-  const narratorReference = path.join(localNarratorDir, "nix-voice-reference.wav");
-  const narratorReferenceTextPath = path.join(localNarratorDir, "nix-voice-reference.txt");
-  if (!fs.existsSync(narratorReference)) throw new Error(`Missing local narrator reference: ${narratorReference}`);
-  if (!fs.existsSync(narratorReferenceTextPath)) throw new Error(`Missing local narrator reference text: ${narratorReferenceTextPath}`);
+  const bank = voiceReferenceBank();
+  if (!fs.existsSync(bank.narrator.audio)) throw new Error(`Missing local narrator reference: ${bank.narrator.audio}`);
 
   const outputRoot = path.join(localNarratorDir, "cloud-renders", slug(book.title || book.id), `scene-${String(scene.scene_order || "0").padStart(2, "0")}-${slug(scene.title || scene.id)}`, job.id);
   const sourcePath = path.join(outputRoot, "scene-text.txt");
@@ -396,12 +557,7 @@ function buildNarratorPlan({ job, scene, book }) {
     render_target: "local_qwen",
     book: { id: book.id, title: book.title || "" },
     scene: { id: scene.id, title: scene.title || "", scene_order: scene.scene_order || 0 },
-    units: [{
-      text,
-      speaker: "Narrator",
-      reference_audio: narratorReference,
-      reference_text: fs.readFileSync(narratorReferenceTextPath, "utf8").trim(),
-    }],
+    units: buildNarrationUnits({ text, speakers: scene.speakers, bank }),
   });
 
   return { outputRoot, sourcePath, planPath, outputPath, segmentsDir, soundPlanPath, effectsStemPath, ambienceStemPath, withSfxPath, finalMixPath };
@@ -417,14 +573,15 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
 
   const effects = approvedSfx.slice(0, 12).map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
+    const gainDb = Math.max(Number(cuePlan.gain_db ?? -12), -12);
     return {
       kind: "effect",
       cue,
       description: cuePlan.description || cue.label || "",
       search_terms: cuePlan.search_terms || cueSearchTerms(cue),
       start_seconds: parseCueTime(cue.time, index),
-      gain_db_intent: Number(cuePlan.gain_db ?? -18),
-      gain_linear: dbToLinear(cuePlan.gain_db ?? -18),
+      gain_db_intent: gainDb,
+      gain_linear: dbToLinear(gainDb),
       fade_in: Number(cuePlan.fade_in ?? 0.03),
       fade_out: Number(cuePlan.fade_out ?? 0.2),
       reason: cuePlan.reason || cue.reason || "",
@@ -435,14 +592,15 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
 
   const ambience = approvedAmbience.slice(0, 4).map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
+    const gainDb = Math.min(Math.max(Number(cuePlan.gain_db ?? -26), -30), -22);
     return {
       kind: "ambience",
       cue,
       description: cuePlan.description || cue.label || "",
       search_terms: cuePlan.search_terms || cueSearchTerms(cue),
       start_seconds: parseCueTime(cue.time, index),
-      gain_db_intent: Number(cuePlan.gain_db ?? -28),
-      gain_linear: dbToLinear(cuePlan.gain_db ?? -28),
+      gain_db_intent: gainDb,
+      gain_linear: dbToLinear(gainDb),
       fade_in: Number(cuePlan.fade_in ?? 1.5),
       fade_out: Number(cuePlan.fade_out ?? 2.0),
       reason: cuePlan.reason || cue.reason || "",
@@ -483,9 +641,10 @@ async function renderSoundDesign(paths, soundPlan) {
   const ffmpeg = process.env.FFMPEG_PATH || (fs.existsSync(defaultFfmpeg) ? defaultFfmpeg : "ffmpeg");
   const effectItems = soundPlan.effects.filter((entry) => entry.asset);
   const ambienceItems = soundPlan.ambience.filter((entry) => entry.asset);
+  const narrationDuration = await audioDurationSeconds(ffmpeg, paths.outputPath).catch(() => 0);
 
-  if (effectItems.length) await renderOverlayStem({ ffmpeg, items: effectItems, outputPath: paths.effectsStemPath, gain: 0.13 });
-  if (ambienceItems.length) await renderOverlayStem({ ffmpeg, items: ambienceItems, outputPath: paths.ambienceStemPath, gain: 0.04 });
+  if (effectItems.length) await renderOverlayStem({ ffmpeg, items: effectItems, outputPath: paths.effectsStemPath, gain: dbToLinear(-12) });
+  if (ambienceItems.length) await renderOverlayStem({ ffmpeg, items: ambienceItems, outputPath: paths.ambienceStemPath, gain: dbToLinear(-26), loopToSeconds: narrationDuration });
   await renderNarrationPlusStem({ ffmpeg, narrationPath: paths.outputPath, stemPath: paths.effectsStemPath, outputPath: paths.withSfxPath });
   await renderFinalMix({ ffmpeg, narrationPath: paths.outputPath, effectsPath: paths.effectsStemPath, ambiencePath: paths.ambienceStemPath, outputPath: paths.finalMixPath });
 }
