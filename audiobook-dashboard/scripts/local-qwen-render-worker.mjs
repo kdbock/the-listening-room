@@ -221,6 +221,13 @@ function voiceReferenceBank() {
         ? fs.readFileSync(path.join(localNarratorDir, "nix-voice-reference.txt"), "utf8").trim()
         : calibrationText,
     },
+    byType: {
+      female_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav")
+        || existingFile(localNarratorDir, "voice-auditions", "orra", "orra.v001.wav"),
+      female_voice_2: existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav"),
+      female_voice_3: existingFile(localNarratorDir, "voice-approved", "PG2026", "ressa", "ressa-reference.v001.wav"),
+      male_voice_1: existingFile(localNarratorDir, "voice-approved", "PG2026", "flint", "flint-reference.v001.wav"),
+    },
     women: [
       existingFile(localNarratorDir, "voice-approved", "PG2026", "orra", "orra-reference.v001.wav"),
       existingFile(localNarratorDir, "voice-approved", "PG2026", "tamsin", "tamsin-reference.v001.wav"),
@@ -243,6 +250,8 @@ function voiceReferenceBank() {
 function pickSpeakerReference(speaker, bank) {
   const voice = String(speaker.approved_voice || speaker.recommended_voice || "").toLowerCase();
   const name = String(speaker.name || "Speaker");
+  if (voice === "narrator_voice") return bank.narrator;
+  if (bank.byType?.[voice]) return { audio: bank.byType[voice], text: calibrationText };
   if (voice.includes("man") && !voice.includes("woman") && bank.men.length) {
     return { audio: bank.men[hashIndex(name, bank.men.length)], text: calibrationText };
   }

@@ -21,6 +21,18 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "render", label: "Render" },
 ];
 
+const speakerVoiceTypes = [
+  { value: "female_voice_1", label: "Female voice 1", detail: "Lower / grounded" },
+  { value: "female_voice_2", label: "Female voice 2", detail: "Clear / direct" },
+  { value: "female_voice_3", label: "Female voice 3", detail: "Warm / expressive" },
+  { value: "male_voice_1", label: "Male voice 1", detail: "Low / weathered" },
+  { value: "narrator_voice", label: "Narrator voice", detail: "Use narrator for this speaker" },
+];
+
+function voiceTypeLabel(value: string) {
+  return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
+}
+
 function isLikelyManuscript(material: MaterialRecord) {
   const lowerName = material.name.toLowerCase();
   return material.category === "Manuscript"
@@ -297,6 +309,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function approveVoices() {
     if (!activeScene) return;
+    const missing = activeScene.speakers.filter((speaker) => speaker.name !== "Unassigned" && !speaker.approved_voice);
+    if (missing.length) {
+      setSceneStatus(`Choose a voice type for ${missing.map((speaker) => speaker.name).join(", ")} before approving.`);
+      return;
+    }
     await updateScene({
       ...activeScene,
       speakers: activeScene.speakers.map((speaker) => ({ ...speaker, status: "approved" })),
@@ -602,7 +619,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "characters" && (
                   <>
-                    <p className="muted">Identify the speaking parts in this episode, then approve or adjust each recommended voice.</p>
+                    <p className="muted">Identify the speaking parts in this episode, then choose the voice type yourself. The app will not assign character voices automatically.</p>
                     <div className="actions">
                       <button className="button" onClick={identifySpeakers}>Identify speakers in this episode</button>
                     </div>
@@ -611,27 +628,35 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         <div className="studio-row" key={`${speaker.name}-${index}`}>
                           <div>
                             <strong>{speaker.name}</strong>
-                            <small>{speaker.line_count} lines · {speaker.status}</small>
+                            <small>{speaker.line_count} lines · {voiceTypeLabel(speaker.approved_voice)}</small>
                           </div>
                           <div className="studio-list">
-                            <input
+                            <select
+                              aria-label={`Voice type for ${speaker.name}`}
                               value={speaker.approved_voice}
                               onChange={(event) => {
-                                const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, status: "rejected" as const } : entry);
+                                const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: event.target.value, recommended_voice: "", status: "recommended" as const } : entry);
                                 setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
                               }}
-                            />
+                            >
+                              <option value="">Choose voice type…</option>
+                              {speakerVoiceTypes.map((option) => (
+                                <option key={`${speaker.name}-${option.value}`} value={option.value}>
+                                  {option.label} — {option.detail}
+                                </option>
+                              ))}
+                            </select>
                             <div className="actions">
-                              {["Warm woman", "Warm man", "Young woman", "Young man", "Older woman", "Older man"].map((option) => (
+                              {speakerVoiceTypes.map((option) => (
                                 <button
-                                  key={`${speaker.name}-${option}`}
-                                  className="button ghost"
+                                  key={`${speaker.name}-${option.value}`}
+                                  className={`button ghost ${speaker.approved_voice === option.value ? "selected" : ""}`}
                                   onClick={() => {
-                                    const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: option, status: "rejected" as const } : entry);
+                                    const speakers: StudioSpeaker[] = activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, approved_voice: option.value, recommended_voice: "", status: "recommended" as const } : entry);
                                     setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, speakers } : scene));
                                   }}
                                 >
-                                  {option}
+                                  {option.label}
                                 </button>
                               ))}
                             </div>

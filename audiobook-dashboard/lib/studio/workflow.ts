@@ -1,14 +1,5 @@
 import type { SceneRecord, StudioCue, StudioSpeaker } from "@/lib/firebase/scenes";
 
-const voicePalette = [
-  "Warm grounded narrator",
-  "Smoky contralto lead",
-  "Clear reflective mezzo",
-  "Measured low alto",
-  "Weathered intimate tenor",
-  "Bright alert supporting voice",
-];
-
 const sfxRules: Array<{ terms: string[]; label: string; reason: string }> = [
   { terms: ["door", "knock", "entered", "emerged", "left", "leaving"], label: "Door and threshold movement", reason: "A character enters, exits, or crosses a threshold here." },
   { terms: ["footstep", "walk", "paced", "crossed", "stairs", "towards"], label: "Character footsteps", reason: "Physical movement can give this beat shape without overpowering the narration." },
@@ -69,10 +60,6 @@ function splitIntoScenes(text: string) {
   return scenes;
 }
 
-function recommendVoice(index: number) {
-  return voicePalette[index % voicePalette.length];
-}
-
 function extractSpeakers(text: string): StudioSpeaker[] {
   const matches = Array.from(text.matchAll(/[“"]([^”"]+)[”"](?:\s*,?\s*(?:said|asked|replied|whispered|murmured|snapped)\s+([A-Z][a-zA-Z'-]+)|\s*,?\s*([A-Z][a-zA-Z'-]+)\s+(?:said|asked|replied|whispered|murmured|snapped))?/g));
   const counts = new Map<string, number>();
@@ -82,11 +69,11 @@ function extractSpeakers(text: string): StudioSpeaker[] {
     counts.set(speaker, (counts.get(speaker) ?? 0) + 1);
   }
 
-  return Array.from(counts.entries()).map(([name, line_count], index) => ({
+  return Array.from(counts.entries()).map(([name, line_count]) => ({
     name,
     line_count,
-    recommended_voice: recommendVoice(index),
-    approved_voice: recommendVoice(index),
+    recommended_voice: "",
+    approved_voice: "",
     status: "recommended",
   }));
 }

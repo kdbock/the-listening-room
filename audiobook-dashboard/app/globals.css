@@ -70,6 +70,7 @@ button { color:inherit; }
 .button:hover { transform:translateY(-1px); }
 .button.primary { background:var(--forest); color:#fff; }
 .button.primary:hover { background:var(--forest-2); }
+.button.selected { background:#f8f4ea; border-color:var(--gold); color:var(--forest); }
 .button:disabled { opacity:.55; cursor:wait; }
 .hero { min-height:430px; padding:76px clamp(24px,8vw,128px) 82px; color:#f7f3e9; background:var(--forest); display:grid; grid-template-columns:minmax(0,1.5fr) minmax(220px,.5fr); align-items:end; gap:50px; position:relative; overflow:hidden; }
 .hero:before,.hero:after { content:""; position:absolute; border:1px solid rgba(255,255,255,.1); border-radius:50%; width:510px; height:510px; right:-180px; top:-260px; }
