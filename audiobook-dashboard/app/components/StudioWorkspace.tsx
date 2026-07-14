@@ -597,27 +597,52 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     const speaker = activeScene.speakers.find((entry) => entry.name === speakerName);
     if (!speaker) return;
     const color = speaker.color || speakerColors[activeScene.speakers.findIndex((entry) => entry.name === speaker.name) % speakerColors.length];
+    const range = selectedDialogueRange;
+    const originalText = activeScene.text;
+    const rangeIsValid = Boolean(range && range.start >= 0 && range.end > range.start && range.end <= originalText.length);
+    const nextText = rangeIsValid
+      ? `${originalText.slice(0, range!.start)}${selected}${originalText.slice(range!.end)}`
+      : originalText;
+    const delta = rangeIsValid ? selected.length - (range!.end - range!.start) : 0;
+    const assignmentStart = rangeIsValid ? range!.start : undefined;
+    const assignmentEnd = rangeIsValid ? range!.start + selected.length : undefined;
     const assignment: StudioDialogueAssignment = {
       id: `dialogue-${Date.now()}`,
       speaker: speaker.name,
       text: selected,
       color,
-      start: selectedDialogueRange?.start,
-      end: selectedDialogueRange?.end,
+      start: assignmentStart,
+      end: assignmentEnd,
     };
     const existingAssignments = activeScene.dialogue_assignments ?? [];
+    const adjustedAssignments = existingAssignments
+      .filter((entry) => {
+        if (!rangeIsValid || typeof entry.start !== "number" || typeof entry.end !== "number") return true;
+        return !(entry.start < range!.end && entry.end > range!.start);
+      })
+      .map((entry) => {
+        if (!rangeIsValid || !delta || typeof entry.start !== "number" || typeof entry.end !== "number" || entry.start < range!.end) {
+          return entry;
+        }
+        return { ...entry, start: entry.start + delta, end: entry.end + delta };
+      });
     await updateScene({
       ...activeScene,
-      dialogue_assignments: [...existingAssignments.filter((entry) => !(entry.speaker === assignment.speaker && entry.text === assignment.text)), assignment],
+      text: nextText,
+      dialogue_assignments: [...adjustedAssignments.filter((entry) => !(entry.speaker === assignment.speaker && entry.text === assignment.text)), assignment],
       speakers: activeScene.speakers.map((entry) => entry.name === speaker.name ? { ...entry, line_count: entry.line_count + 1, color } : entry),
       approvals: { ...activeScene.approvals, voice: true },
       final_mix_status: "draft",
+      render_job_status: "",
+      render_output_path: "",
+      render_sound_design_plan_path: "",
+      render_error_message: "",
     });
     setSelectedDialogueText("");
     setSelectedDialogueRange(null);
     setSelectedSpeakerName(speaker.name);
     window.getSelection()?.removeAllRanges();
-    setSceneStatus(`Assigned selected text to ${speaker.name}.`);
+    setSceneStatus(rangeIsValid ? `Updated episode text and assigned it to ${speaker.name}.` : `Assigned selected text to ${speaker.name}.`);
   }
 
   async function removeDialogueAssignment(assignmentId: string) {
