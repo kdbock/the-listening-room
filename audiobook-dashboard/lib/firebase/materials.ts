@@ -11,6 +11,7 @@ import {
 import {
   deleteObject,
   getBytes,
+  getDownloadURL,
   ref,
   uploadBytes,
 } from "firebase/storage";
