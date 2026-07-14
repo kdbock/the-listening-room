@@ -45,7 +45,6 @@ async function reserveNextQueuedJob() {
   const snapshot = await db
     .collection("render_jobs")
     .where("status", "==", "queued")
-    .orderBy("created_at", "asc")
     .limit(5)
     .get();
 
@@ -226,19 +225,33 @@ const server = http.createServer(async (request, response) => {
   }
 
   if (request.method === "POST" && request.url === "/process-next") {
-    const result = await processNextJob();
-    return json(response, result.ok ? 200 : 500, result);
+    try {
+      const result = await processNextJob();
+      return json(response, result.ok ? 200 : 500, result);
+    } catch (error) {
+      return json(response, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   if (request.method === "POST" && request.url === "/process-batch") {
-    const results = [];
-    const batchSize = Math.max(1, Math.min(5, Number(process.env.RENDER_BATCH_SIZE || 3)));
-    for (let index = 0; index < batchSize; index += 1) {
-      const result = await processNextJob();
-      results.push(result);
-      if (!result.processed) break;
+    try {
+      const results = [];
+      const batchSize = Math.max(1, Math.min(5, Number(process.env.RENDER_BATCH_SIZE || 3)));
+      for (let index = 0; index < batchSize; index += 1) {
+        const result = await processNextJob();
+        results.push(result);
+        if (!result.processed) break;
+      }
+      return json(response, 200, { ok: true, results });
+    } catch (error) {
+      return json(response, 500, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
-    return json(response, 200, { ok: true, results });
   }
 
   return json(response, 404, { ok: false, error: "Not found." });
