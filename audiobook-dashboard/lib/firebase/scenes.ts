@@ -44,6 +44,9 @@ export type SceneRecord = {
   voice_notes?: string;
   intro?: string;
   outro?: string;
+  render_job_status?: string;
+  render_output_path?: string;
+  render_error_message?: string;
   approvals?: {
     script?: boolean;
     voice?: boolean;

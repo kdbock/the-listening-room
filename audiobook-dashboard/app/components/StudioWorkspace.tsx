@@ -3,10 +3,12 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
+import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
+import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
 
@@ -37,6 +39,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [savingSceneId, setSavingSceneId] = useState("");
   const [sceneStatus, setSceneStatus] = useState("");
   const [renderJob, setRenderJob] = useState<RenderJobRecord | null>(null);
+  const [renderArtifactUrl, setRenderArtifactUrl] = useState("");
   const [error, setError] = useState("");
   const [manuscriptText, setManuscriptText] = useState("");
   const [manuscriptSourceName, setManuscriptSourceName] = useState("");
@@ -166,6 +169,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   useEffect(() => {
     if (!activeScene?.id || activeScene.id.startsWith("preview-")) {
       setRenderJob(null);
+      setRenderArtifactUrl("");
       return;
     }
 
@@ -175,8 +179,18 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       } catch {
         setRenderJob(null);
       }
+
+      if (activeScene.render_output_path) {
+        try {
+          setRenderArtifactUrl(await getDownloadURL(ref(getClientStorage(), activeScene.render_output_path)));
+        } catch {
+          setRenderArtifactUrl("");
+        }
+      } else {
+        setRenderArtifactUrl("");
+      }
     })();
-  }, [activeScene?.id]);
+  }, [activeScene?.id, activeScene?.render_output_path]);
 
   async function importManuscript() {
     if (!book || !manuscriptText.trim()) return;
@@ -288,6 +302,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       if (!response.ok) {
         throw new Error(typeof payload?.error === "string" ? payload.error : "The render worker could not process the queue.");
       }
+      await loadWorkspace();
       setSceneStatus(nextId ? `Scene queued and handed to the render worker. Moving to the next scene.` : `Scene queued and handed to the render worker.`);
     } catch (err) {
       setSceneStatus(err instanceof Error ? `Scene queued, but the render worker did not start: ${err.message}` : "Scene queued, but the render worker did not start.");
@@ -619,6 +634,24 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           ? `${renderJob.status} · requested ${new Date(renderJob.requested_at).toLocaleString()}`
                           : "No render job queued yet."}
                       </small>
+                    </div>
+                    <div className="studio-render-card">
+                      <strong>Render result</strong>
+                      {activeScene.render_output_path ? (
+                        <>
+                          <small>{activeScene.render_output_path}</small>
+                          {renderArtifactUrl && (
+                            <div className="actions">
+                              <a className="button ghost" href={renderArtifactUrl} target="_blank" rel="noreferrer">Open render artifact</a>
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <small>No render output has been written for this scene yet.</small>
+                      )}
+                      {activeScene.render_error_message && (
+                        <small>{activeScene.render_error_message}</small>
+                      )}
                     </div>
                     <div className="actions">
                       <button className="button primary" onClick={markReadyToRender}>Mark scene ready for render queue</button>
