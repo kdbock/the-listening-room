@@ -30,6 +30,53 @@ Current Firebase wiring lives in:
 - `lib/firebase/client.ts`
 - `lib/firebase/collections.ts`
 
+## Local Qwen Rendering
+
+The hosted app is the control panel. It can be used anywhere to review scenes,
+approve voices, sound cues, ambience, and queue a render job.
+
+Voice generation stays local. New render jobs are written to Firestore with
+`render_target: "local_qwen"`. They do not call OpenAI voice APIs and they are
+not picked up by the Cloud Run worker.
+
+Run the local worker on the Mac that has the Qwen environment and local voice
+references:
+
+```bash
+cd /Users/kristykelly/Documents/Pangea/Scene\ Studio/audiobook-dashboard
+npm run render:local
+```
+
+The worker reads queued `local_qwen` jobs, renders narration with:
+
+```text
+local-narrator/scene-studio/scene_tts_renderer.py
+```
+
+Then it reads approved `sfx_cues` and `ambience_cues`, runs a local Qwen
+sound-designer pass when the local instruct model is installed, falls back to a
+deterministic local planner when needed, matches the resulting search terms
+against the local sound archive index, and writes:
+
+- `sound-design-plan.json`
+- `02-effects.wav`
+- `03-ambience.wav`
+- `with-sfx.wav`
+- `final-mix.wav`
+
+Audio saves under:
+
+```text
+local-narrator/cloud-renders/
+```
+
+Use this split intentionally:
+
+- At work or away from the render machine: review, edit, approve, and queue.
+- At home on the render Mac: run `npm run render:local` to create the audio.
+- Finished local files can be uploaded later if they need to play from another
+  device.
+
 This starter does not use `wrangler.jsonc`.
 
 ## Included Shape
@@ -103,6 +150,7 @@ actions tied to the current ChatGPT user. Leave public content anonymous.
 
 - `npm run dev`: start local development
 - `npm run build`: verify the vinext build output
+- `npm run render:local`: watch Firestore for local Qwen render jobs
 - `npm test`: build the starter and verify its rendered loading skeleton
 - `npm run db:generate`: generate Drizzle migrations after schema changes
 

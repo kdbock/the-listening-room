@@ -10,11 +10,16 @@ const voicePalette = [
 ];
 
 const sfxRules: Array<{ terms: string[]; label: string; reason: string }> = [
-  { terms: ["door", "knock", "open", "close"], label: "Door / room movement", reason: "The scene text suggests a physical entry or exit." },
-  { terms: ["footstep", "walk", "crossed", "stairs"], label: "Footsteps / movement", reason: "There is body movement that could be lightly reinforced." },
+  { terms: ["door", "knock", "entered", "emerged", "left", "leaving"], label: "Door and threshold movement", reason: "A character enters, exits, or crosses a threshold here." },
+  { terms: ["footstep", "walk", "paced", "crossed", "stairs", "towards"], label: "Character footsteps", reason: "Physical movement can give this beat shape without overpowering the narration." },
+  { terms: ["car", "truck", "drive", "engine", "parking"], label: "Vehicle movement", reason: "A vehicle action or nearby vehicle is part of the scene." },
+  { terms: ["box", "boxes", "suitcase", "bag", "packed"], label: "Boxes and luggage handling", reason: "Handled objects can make the physical business of the scene audible." },
+  { terms: ["phone", "called", "calling", "text me"], label: "Phone handling or ring", reason: "A phone action creates a clear, optional sound-design beat." },
+  { terms: ["cry", "tears", "sob", "scream"], label: "Subtle cloth and breath detail", reason: "A restrained close detail could support the emotional action without literalizing it." },
   { terms: ["rain", "storm", "wind", "thunder"], label: "Weather accent", reason: "The environment includes weather detail worth testing." },
-  { terms: ["ship", "boat", "deck", "harbor", "sea"], label: "Water / vessel texture", reason: "The language points to nautical environment cues." },
-  { terms: ["bell", "church", "clock"], label: "Bell or chime accent", reason: "The scene includes a bell-like story moment." },
+  { terms: ["ship", "boat", "deck", "harbor", "sea", "shore"], label: "Water or vessel detail", reason: "The language points to a nautical environment cue." },
+  { terms: ["bell", "church", "clock", "christmas music"], label: "Bell or music-source detail", reason: "The text includes a specific audible source that can locate the listener." },
+  { terms: ["kiss", "hug", "arms around"], label: "Clothing movement", reason: "Very light fabric movement could make this intimate action feel present." },
 ];
 
 const ambienceRules: Array<{ terms: string[]; label: string; reason: string }> = [
@@ -86,17 +91,31 @@ function extractSpeakers(text: string): StudioSpeaker[] {
   }));
 }
 
-function buildCues(text: string, rules: Array<{ terms: string[]; label: string; reason: string }>): StudioCue[] {
+function cueTime(text: string, terms: string[]) {
+  const lower = text.toLowerCase();
+  const positions = terms.map((term) => lower.indexOf(term)).filter((position) => position >= 0);
+  const position = positions.length ? Math.min(...positions) : 0;
+  const wordsBefore = text.slice(0, position).trim().split(/\s+/).filter(Boolean).length;
+  const seconds = Math.max(0, Math.round(wordsBefore / 2.5));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function buildCues(text: string, rules: Array<{ terms: string[]; label: string; reason: string }>, limit = 6): StudioCue[] {
   const lower = text.toLowerCase();
   return rules
     .filter((rule) => rule.terms.some((term) => lower.includes(term)))
-    .slice(0, 4)
+    .slice(0, limit)
     .map((rule, index) => ({
       id: `${rule.label}-${index}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
       label: rule.label,
       reason: rule.reason,
       approved: false,
+      time: cueTime(text, rule.terms),
     }));
+}
+
+export function recommendSfxCues(text: string) {
+  return buildCues(text, sfxRules, 6);
 }
 
 export function buildScenesFromManuscript(bookId: string, manuscriptText: string): Omit<SceneRecord, "id" | "created_at" | "updated_at">[] {
@@ -109,9 +128,10 @@ export function buildScenesFromManuscript(bookId: string, manuscriptText: string
       text,
       estimated_minutes: estimateMinutes(words),
       speakers: extractSpeakers(text),
-      sfx_cues: buildCues(text, sfxRules),
+      sfx_cues: recommendSfxCues(text),
       ambience_cues: buildCues(text, ambienceRules),
-      narrator: "Listening Room narrator",
+      narrator: "Local Qwen narrator",
+      narrator_voice_id: "local-qwen",
       voice_notes: "",
       intro: "none",
       outro: "none",

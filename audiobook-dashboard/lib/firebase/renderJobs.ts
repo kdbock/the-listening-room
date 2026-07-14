@@ -10,8 +10,10 @@ import {
 } from "firebase/firestore";
 import { firestoreCollections } from "./collections";
 import { getClientFirestore } from "./client";
+import type { SoundDesignPlanSummary } from "./scenes";
 
 export type RenderJobStatus = "queued" | "processing" | "completed" | "failed";
+export type RenderTarget = "local_qwen" | "cloud_run";
 
 export type RenderJobRecord = {
   id: string;
@@ -19,7 +21,10 @@ export type RenderJobRecord = {
   scene_id: string;
   scene_title: string;
   status: RenderJobStatus;
+  render_target: RenderTarget;
   output_path: string;
+  local_output_path: string;
+  sound_design_plan?: SoundDesignPlanSummary;
   error_message: string;
   requested_at: string;
   started_at: string;
@@ -39,7 +44,10 @@ function normalizeRenderJob(id: string, data: DocumentData): RenderJobRecord {
     scene_id: String(data.scene_id ?? ""),
     scene_title: String(data.scene_title ?? "Untitled scene"),
     status: (data.status as RenderJobStatus) ?? "queued",
+    render_target: (data.render_target as RenderTarget) ?? "local_qwen",
     output_path: String(data.output_path ?? ""),
+    local_output_path: String(data.local_output_path ?? ""),
+    sound_design_plan: data.sound_design_plan as SoundDesignPlanSummary | undefined,
     error_message: String(data.error_message ?? ""),
     requested_at: String(data.requested_at ?? ""),
     started_at: String(data.started_at ?? ""),
@@ -79,7 +87,9 @@ export async function queueRenderJob(input: { bookId: string; sceneId: string; s
     scene_id: input.sceneId,
     scene_title: input.sceneTitle,
     status: "queued" as RenderJobStatus,
+    render_target: "local_qwen" as RenderTarget,
     output_path: "",
+    local_output_path: "",
     error_message: "",
     requested_at: timestamp,
     started_at: "",
@@ -94,7 +104,9 @@ export async function queueRenderJob(input: { bookId: string; sceneId: string; s
     scene_id: input.sceneId,
     scene_title: input.sceneTitle,
     status: "queued" as RenderJobStatus,
+    render_target: "local_qwen" as RenderTarget,
     output_path: "",
+    local_output_path: "",
     error_message: "",
     requested_at: timestamp,
     started_at: "",

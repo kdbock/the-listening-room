@@ -37,6 +37,15 @@ body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--fo
 .studio-render-card { margin-top:18px; padding:18px; border:1px solid var(--line); border-radius:10px; background:#fff; }
 .studio-render-card strong,.studio-render-card small { display:block; }
 .studio-render-card small { margin-top:6px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em; font-size:10px; }
+.render-audio-result audio { display:block; width:100%; margin:14px 0; }
+.render-audio-result { margin-top:12px; }
+.sound-plan-review { display:grid; gap:12px; }
+.sound-plan-list { display:grid; gap:10px; }
+.sound-plan-item { display:grid; grid-template-columns:minmax(180px,.65fr) minmax(0,1fr); gap:14px; padding:12px 0; border-top:1px solid var(--line); }
+.sound-plan-item.unmatched strong { color:#8a4e45; }
+.sound-plan-item small { display:block; color:var(--muted); line-height:1.5; overflow-wrap:anywhere; }
+.sound-plan-unmatched { display:grid; gap:5px; padding:10px 12px; background:#fff0df; color:#8a4e45; }
+.sound-plan-unmatched small { color:#8a4e45; }
 button,input,select,textarea { font:inherit; }
 button { color:inherit; }
 .topbar { height:86px; padding:0 clamp(24px,5vw,76px); display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(38,48,44,.15); background:rgba(244,240,231,.9); position:sticky; top:0; z-index:20; backdrop-filter:blur(14px); }

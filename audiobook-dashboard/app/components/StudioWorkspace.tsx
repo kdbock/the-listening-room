@@ -6,7 +6,7 @@ import { listBooks, saveBook, type FirestoreBook } from "@/lib/firebase/books";
 import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
-import { buildScenesFromManuscript } from "@/lib/studio/workflow";
+import { buildScenesFromManuscript, recommendSfxCues } from "@/lib/studio/workflow";
 import { listScenes, replaceScenes, saveScene, type SceneRecord, type StudioSpeaker } from "@/lib/firebase/scenes";
 import { getDownloadURL, ref } from "firebase/storage";
 
@@ -16,9 +16,9 @@ const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "script", label: "1 · Text" },
   { key: "voice", label: "2 · Narration" },
   { key: "characters", label: "3 · Characters" },
-  { key: "sfx", label: "5 · Sound effects" },
-  { key: "music", label: "6 · Ambience / music" },
-  { key: "render", label: "7 · Render" },
+  { key: "sfx", label: "4 · Sound effects" },
+  { key: "music", label: "5 · Ambience / music" },
+  { key: "render", label: "6 · Render" },
 ];
 
 function isLikelyManuscript(material: MaterialRecord) {
@@ -27,6 +27,14 @@ function isLikelyManuscript(material: MaterialRecord) {
     || material.content_type.startsWith("text/")
     || lowerName.endsWith(".txt")
     || lowerName.endsWith(".md");
+}
+
+function isLocalRenderPath(path: string) {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+function isLegacyCloudRenderPath(path: string) {
+  return path.startsWith("renders/");
 }
 
 export default function StudioWorkspace({ bookId }: { bookId: string }) {
@@ -165,6 +173,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     () => scenes.find((scene) => scene.id === activeSceneId) ?? scenes[0] ?? null,
     [activeSceneId, scenes],
   );
+  const soundDesignPlan = activeScene?.render_sound_design_plan ?? renderJob?.sound_design_plan;
+  const soundDesignItems = soundDesignPlan?.items ?? [];
+  const soundDesignUnmatched = soundDesignPlan?.unmatched ?? [];
 
   useEffect(() => {
     if (!activeScene?.id || activeScene.id.startsWith("preview-")) {
@@ -180,7 +191,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         setRenderJob(null);
       }
 
-      if (activeScene.render_output_path) {
+      if (activeScene.render_output_path && !isLocalRenderPath(activeScene.render_output_path)) {
         try {
           setRenderArtifactUrl(await getDownloadURL(ref(getClientStorage(), activeScene.render_output_path)));
         } catch {
@@ -291,22 +302,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       sceneTitle: activeScene.title,
     });
     setRenderJob(job);
-    try {
-      const response = await fetch("/api/render/process", {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-        },
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(typeof payload?.error === "string" ? payload.error : "The render worker could not process the queue.");
-      }
-      await loadWorkspace();
-      setSceneStatus(nextId ? `Scene queued and handed to the render worker. Moving to the next scene.` : `Scene queued and handed to the render worker.`);
-    } catch (err) {
-      setSceneStatus(err instanceof Error ? `Scene queued, but the render worker did not start: ${err.message}` : "Scene queued, but the render worker did not start.");
-    }
+    await loadWorkspace();
+    setSceneStatus(nextId ? "Scene queued for the local Qwen renderer. Moving to the next scene." : "Scene queued for the local Qwen renderer.");
     if (nextId) {
       setActiveSceneId(nextId);
       setTab("script");
@@ -327,6 +324,19 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       ...activeScene,
       approvals: { ...activeScene.approvals, voice: false },
     });
+  }
+
+  async function refreshSfxSuggestions() {
+    if (!activeScene) return;
+    const existingChoices = activeScene.sfx_cues.filter((cue) => cue.approved || cue.reason === "Added manually in the studio.");
+    const existingLabels = new Set(existingChoices.map((cue) => cue.label.toLowerCase()));
+    const recommendations = recommendSfxCues(activeScene.text).filter((cue) => !existingLabels.has(cue.label.toLowerCase()));
+    await updateScene({
+      ...activeScene,
+      sfx_cues: [...existingChoices, ...recommendations],
+      approvals: { ...activeScene.approvals, sfx: false },
+    });
+    setSceneStatus(`Prepared ${recommendations.length} scene-specific sound suggestions. Nothing was approved automatically.`);
   }
 
   async function saveCue(kind: "sfx_cues" | "ambience_cues", values: { time: string; label: string; source: string; license: string }) {
@@ -487,30 +497,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "voice" && (
                   <>
-                    <p className="muted">Choose the book’s narration voice here before you move into character dialogue voices.</p>
-                    <div className="studio-list">
-                      <div className="studio-row">
-                        <div>
-                          <strong>Narration voice</strong>
-                          <small>Book-wide storytelling voice</small>
-                        </div>
-                        <input
-                          value={activeScene.narrator ?? "Listening Room narrator"}
-                          onChange={(event) => setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, narrator: event.target.value } : scene))}
-                        />
-                      </div>
-                    </div>
-                    <div className="studio-list">
-                      {["Warm adult woman", "Warm adult man", "Younger woman", "Younger man", "Older woman", "Older man"].map((option) => (
-                        <button
-                          key={option}
-                          className={`scene-pill ${(activeScene.narrator ?? "") === option ? "active" : ""}`}
-                          onClick={() => setScenes((current) => current.map((scene) => scene.id === activeScene.id ? { ...scene, narrator: option } : scene))}
-                        >
-                          <strong>{option}</strong>
-                          <small>Starter narration option</small>
-                        </button>
-                      ))}
+                    <p className="muted">Narration uses the local Qwen voice system from yesterday. This page stores the approved direction; your Mac renders the audio later, so there is no OpenAI voice charge from this screen.</p>
+                    <div className="studio-render-card">
+                      <strong>{activeScene.narrator || "Local Qwen narrator"}</strong>
+                      <small>Render target: local Qwen worker on your Mac. Output saves to the local render folder first.</small>
                     </div>
                     <textarea
                       className="studio-scene-text"
@@ -571,7 +561,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "sfx" && (
                   <>
-                    <p className="muted">This needs multiple useful sound ideas per scene, not just one. Approve the ones you want and add your own where needed.</p>
+                    <p className="muted">Review several possible moments, approve only the ones that help, and add your own where needed. Refreshing suggestions never auto-approves them.</p>
+                    <div className="actions">
+                      <button className="button" onClick={refreshSfxSuggestions}>Refresh scene-specific suggestions</button>
+                    </div>
                     <div className="studio-list">
                       {activeScene.sfx_cues.length ? activeScene.sfx_cues.map((cue) => (
                         <label className="studio-cue" key={cue.id}>
@@ -631,7 +624,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       <strong>Render job</strong>
                       <small>
                         {renderJob
-                          ? `${renderJob.status} · requested ${new Date(renderJob.requested_at).toLocaleString()}`
+                          ? `${renderJob.status} · ${renderJob.render_target.replaceAll("_", " ")} · requested ${new Date(renderJob.requested_at).toLocaleString()}`
                           : "No render job queued yet."}
                       </small>
                     </div>
@@ -640,19 +633,70 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       {activeScene.render_output_path ? (
                         <>
                           <small>{activeScene.render_output_path}</small>
+                          {isLegacyCloudRenderPath(activeScene.render_output_path) && !soundDesignPlan && (
+                            <small>Legacy cloud narration preview. New renders use the local Qwen worker and write final mixes to the Mac.</small>
+                          )}
                           {renderArtifactUrl && (
-                            <div className="actions">
-                              <a className="button ghost" href={renderArtifactUrl} target="_blank" rel="noreferrer">Open render artifact</a>
-                            </div>
+                            activeScene.render_output_path.endsWith(".wav") ? (
+                              <div className="render-audio-result">
+                                <audio controls src={renderArtifactUrl} />
+                                <a className="button ghost" href={renderArtifactUrl} target="_blank" rel="noreferrer">Open audio file</a>
+                              </div>
+                            ) : (
+                              <div className="actions">
+                                <a className="button ghost" href={renderArtifactUrl} target="_blank" rel="noreferrer">Open render artifact</a>
+                              </div>
+                            )
                           )}
                         </>
                       ) : (
-                        <small>No render output has been written for this scene yet.</small>
+                        <small>No render output has been written for this scene yet. The local Mac worker writes this after it picks up the queued job.</small>
                       )}
-                      {activeScene.render_error_message && (
+                      {activeScene.render_sound_design_plan_path && (
+                        <small>Sound design plan: {activeScene.render_sound_design_plan_path}</small>
+                      )}
+                      {renderJob?.local_output_path && <small>Local file: {renderJob.local_output_path}</small>}
+                      {activeScene.render_error_message && !activeScene.render_output_path && (
                         <small>{activeScene.render_error_message}</small>
                       )}
                     </div>
+                    {soundDesignPlan && (
+                      <div className="studio-render-card sound-plan-review">
+                        <strong>Sound design plan</strong>
+                        <small>{soundDesignPlan.planner} · {soundDesignPlan.tone || "tone pending"}</small>
+                        {soundDesignPlan.scene_summary && <p className="muted">{soundDesignPlan.scene_summary}</p>}
+                        {soundDesignPlan.sound_strategy && <p className="muted">{soundDesignPlan.sound_strategy}</p>}
+                        {soundDesignItems.length ? (
+                          <div className="sound-plan-list">
+                            {soundDesignItems.map((item, index) => (
+                              <div className={`sound-plan-item ${item.matched ? "" : "unmatched"}`} key={`${item.kind}-${item.label}-${index}`}>
+                                <div>
+                                  <strong>{item.time ? `${item.time} · ` : ""}{item.label}</strong>
+                                  <small>{item.kind} · {item.matched ? item.asset_name : "No matching asset yet"}</small>
+                                </div>
+                                <div>
+                                  {item.description && <small>{item.description}</small>}
+                                  {item.reason && <small>Reason: {item.reason}</small>}
+                                  {item.asset_path && <small>Asset: {item.asset_path}</small>}
+                                  <small>Gain {item.gain_db} dB · fade {item.fade_in}s in / {item.fade_out}s out</small>
+                                  {item.avoid && <small>Avoid: {item.avoid}</small>}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <small>No approved sound cues were included in this render.</small>
+                        )}
+                        {soundDesignUnmatched.length > 0 && (
+                          <div className="sound-plan-unmatched">
+                            <strong>Needs attention</strong>
+                            {soundDesignUnmatched.map((item, index) => (
+                              <small key={`${item.label}-${index}`}>{item.time ? `${item.time} · ` : ""}{item.label}: {item.reason || "No matching local asset found."}</small>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
                     <div className="actions">
                       <button className="button primary" onClick={markReadyToRender}>Mark scene ready for render queue</button>
                     </div>

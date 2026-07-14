@@ -62,6 +62,7 @@ async function reserveNextQueuedJob() {
       if (!fresh.exists) return null;
       const data = fresh.data();
       if (!data || data.status !== "queued") return null;
+      if (data.render_target !== "cloud_run") return null;
 
       transaction.update(doc.ref, {
         status: "processing",
@@ -131,6 +132,7 @@ async function renderScenePackage({ job, scene, book }) {
       title: scene.title,
       estimated_minutes: scene.estimated_minutes,
       narrator: scene.narrator || "",
+      narrator_voice_id: scene.narrator_voice_id || "",
       voice_notes: scene.voice_notes || "",
       speakers: scene.speakers || [],
       sfx_cues: scene.sfx_cues || [],
@@ -204,6 +206,27 @@ function chunkNarrationText(text) {
 }
 
 function chooseNarrationVoice(scene) {
+  const voiceDirections = {
+    marin: "Warm, intimate, steady, emotionally intelligent, and restrained.",
+    cedar: "Grounded, warm, measured, trustworthy, and never theatrical.",
+    coral: "Clear, expressive, conversational, and emotionally present.",
+    sage: "Calm, thoughtful, balanced, and quietly confident.",
+    ballad: "Reflective, resonant, lyrical, and grounded.",
+    onyx: "Deep, assured, restrained, and emotionally grounded.",
+    shimmer: "Bright, gentle, emotionally open, and natural.",
+    verse: "Direct, present, versatile, and natural.",
+    alloy: "Neutral, polished, adaptable, and unhurried.",
+    ash: "Steady, clear, understated, and intimate.",
+    echo: "Smooth, measured, focused, and restrained.",
+    fable: "Animated, warm, story-forward, but never exaggerated.",
+    nova: "Energetic, crisp, contemporary, and emotionally aware.",
+  };
+  const selectedVoice = String(scene.narrator_voice_id || "").toLowerCase();
+  if (voiceDirections[selectedVoice]) {
+    return { voice: selectedVoice, instructions: voiceDirections[selectedVoice] };
+  }
+
+  // Preserve older scenes that stored a demographic label instead of a voice ID.
   const label = String(scene.narrator || "").toLowerCase();
   if (label.includes("older woman")) return { voice: "ballad", instructions: "Older adult feminine narrator. Warm, reflective, steady, emotionally grounded." };
   if (label.includes("older man")) return { voice: "onyx", instructions: "Older adult masculine narrator. Calm, grounded, reflective, never theatrical." };
@@ -312,6 +335,7 @@ async function completeJob(jobId, outputPath) {
     await jobRef.update({
       status: "completed",
       output_path: outputPath,
+      error_message: "",
       completed_at: completedAt,
       updated_at: completedAt,
     });
@@ -325,6 +349,7 @@ async function completeJob(jobId, outputPath) {
         final_mix_status: "ready_to_render",
         render_job_status: "completed",
         render_output_path: outputPath,
+        render_error_message: "",
         updated_at: completedAt,
       });
     } catch (error) {

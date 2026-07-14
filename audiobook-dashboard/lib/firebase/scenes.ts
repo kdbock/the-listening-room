@@ -29,6 +29,37 @@ export type StudioCue = {
   license?: string;
 };
 
+export type SoundDesignPlanItem = {
+  kind: "effect" | "ambience";
+  label: string;
+  time: string;
+  description: string;
+  asset_name: string;
+  asset_path: string;
+  gain_db: number;
+  fade_in: number;
+  fade_out: number;
+  reason: string;
+  avoid: string;
+  matched: boolean;
+};
+
+export type SoundDesignPlanSummary = {
+  created_at: string;
+  status: string;
+  planner: string;
+  scene_summary: string;
+  tone: string;
+  sound_strategy: string;
+  plan_path: string;
+  final_mix: string;
+  with_sfx_mix: string;
+  effects_stem: string;
+  ambience_stem: string;
+  items: SoundDesignPlanItem[];
+  unmatched: Array<{ kind: string; label: string; time: string; reason: string }>;
+};
+
 export type SceneRecord = {
   id: string;
   book_id: string;
@@ -41,11 +72,14 @@ export type SceneRecord = {
   ambience_cues: StudioCue[];
   final_mix_status: "draft" | "voices_approved" | "sfx_approved" | "ambience_approved" | "ready_to_render";
   narrator?: string;
+  narrator_voice_id?: string;
   voice_notes?: string;
   intro?: string;
   outro?: string;
   render_job_status?: string;
   render_output_path?: string;
+  render_sound_design_plan_path?: string;
+  render_sound_design_plan?: SoundDesignPlanSummary;
   render_error_message?: string;
   approvals?: {
     script?: boolean;
