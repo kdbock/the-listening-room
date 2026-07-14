@@ -27,6 +27,7 @@ export type MaterialRecord = {
   size: number;
   storage_path: string;
   created_at: string;
+  text_content?: string;
 };
 
 function nowIso() {
@@ -43,6 +44,7 @@ function normalizeMaterial(id: string, data: DocumentData): MaterialRecord {
     size: Number(data.size ?? 0),
     storage_path: String(data.storage_path ?? ""),
     created_at: String(data.created_at ?? nowIso()),
+    text_content: typeof data.text_content === "string" ? data.text_content : undefined,
   };
 }
 
@@ -73,6 +75,8 @@ export async function uploadMaterialFile(bookId: string, category: string, file:
   const id = crypto.randomUUID();
   const storagePath = `materials/${bookId}/${id}/${file.name}`;
   const createdAt = nowIso();
+  const isTextManuscript = category === "Manuscript" && (file.type.startsWith("text/") || file.name.toLowerCase().endsWith(".txt") || file.name.toLowerCase().endsWith(".md"));
+  const textContent = isTextManuscript ? await file.text() : undefined;
 
   await uploadBytes(ref(storage, storagePath), file, {
     contentType: file.type || "application/octet-stream",
@@ -86,6 +90,7 @@ export async function uploadMaterialFile(bookId: string, category: string, file:
     size: file.size,
     storage_path: storagePath,
     created_at: createdAt,
+    text_content: textContent,
   });
 }
 
@@ -101,6 +106,9 @@ export async function downloadMaterialUrl(material: MaterialRecord) {
 }
 
 export async function readMaterialText(material: MaterialRecord) {
+  if (material.text_content?.trim()) {
+    return material.text_content;
+  }
   const bytes = await getBytes(ref(getClientStorage(), material.storage_path), 10 * 1024 * 1024);
   return new TextDecoder("utf-8").decode(bytes);
 }
