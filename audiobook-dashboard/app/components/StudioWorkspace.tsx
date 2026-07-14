@@ -141,21 +141,6 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   }, [bookId]);
 
   useEffect(() => {
-    if (!activeScene?.id || activeScene.id.startsWith("preview-")) {
-      setRenderJob(null);
-      return;
-    }
-
-    (async () => {
-      try {
-        setRenderJob(await getLatestRenderJob(activeScene.id));
-      } catch {
-        setRenderJob(null);
-      }
-    })();
-  }, [activeScene?.id]);
-
-  useEffect(() => {
     if (loading || importing || attemptedAutoImport.current || scenes.length || !book) return;
     if (manuscriptText.trim()) return;
 
@@ -178,6 +163,21 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     () => scenes.find((scene) => scene.id === activeSceneId) ?? scenes[0] ?? null,
     [activeSceneId, scenes],
   );
+
+  useEffect(() => {
+    if (!activeScene?.id || activeScene.id.startsWith("preview-")) {
+      setRenderJob(null);
+      return;
+    }
+
+    (async () => {
+      try {
+        setRenderJob(await getLatestRenderJob(activeScene.id));
+      } catch {
+        setRenderJob(null);
+      }
+    })();
+  }, [activeScene?.id]);
 
   async function importManuscript() {
     if (!book || !manuscriptText.trim()) return;
