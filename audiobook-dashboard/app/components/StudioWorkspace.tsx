@@ -354,7 +354,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     const before = text.slice(Math.max(0, quoteStart - 140), quoteStart);
     const after = text.slice(quoteEnd, quoteEnd + 140);
     const namePattern = "([A-Z][a-zA-Z'’-]+(?:\\s+[A-Z][a-zA-Z'’-]+)?)";
-    const verbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered";
+    const verbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered|added";
     const afterVerbName = new RegExp(`^\\s*[,.!?—–-]*\\s*(?:${verbs})\\s+${namePattern}\\b`, "i").exec(after);
     if (afterVerbName) return knownSpeaker(scene, afterVerbName[1]);
     const afterNameVerb = new RegExp(`^\\s*[,.!?—–-]*\\s*${namePattern}\\s+(?:${verbs})\\b`, "i").exec(after);

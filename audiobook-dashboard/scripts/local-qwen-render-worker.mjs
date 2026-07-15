@@ -31,7 +31,7 @@ const soundArchiveIndexPath = path.join(dashboardDir, "public", "sound-archive-i
 const defaultPython = "/Users/kristykelly/.local/share/local-narration-studio/venv/bin/python";
 const defaultFfmpeg = "/Users/kristykelly/.local/share/local-narration-studio/bin/ffmpeg";
 const calibrationText = "The tide turned before dawn, and every promise came due.";
-const dialogueVerbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered";
+const dialogueVerbs = "said|asked|replied|whispered|murmured|snapped|told|called|cried|shouted|answered|added";
 
 function loadEnvFile(filePath) {
   if (!fs.existsSync(filePath)) return;
@@ -309,7 +309,48 @@ function findKnownSpeaker(rawName, speakerByName) {
   return "";
 }
 
-function inferQuoteSpeaker({ before, after, speakerByName }) {
+function uniqueSpeakerMention(text, speakerByName) {
+  const hits = [];
+  const lowerText = String(text || "").toLowerCase();
+  for (const [key, speaker] of speakerByName.entries()) {
+    if (key === "unassigned") continue;
+    const firstName = key.split(/\s+/)[0];
+    if (!firstName) continue;
+    const escapedName = firstName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`\\b${escapedName}\\b`, "i").test(lowerText)) hits.push(speaker.name);
+  }
+  return new Set(hits).size === 1 ? hits[0] : "";
+}
+
+function paragraphContextSpeaker({ text, quoteStart, quoteEnd, speakerByName }) {
+  const beforeText = text.slice(0, quoteStart);
+  const afterText = text.slice(quoteEnd);
+  const paragraphStartBreaks = Array.from(beforeText.matchAll(/\n\s*\n/g));
+  const paragraphStartBreak = paragraphStartBreaks[paragraphStartBreaks.length - 1];
+  const paragraphStart = paragraphStartBreak?.index !== undefined
+    ? paragraphStartBreak.index + paragraphStartBreak[0].length
+    : 0;
+  const paragraphEndMatch = afterText.match(/\n\s*\n/);
+  const paragraphEnd = paragraphEndMatch?.index !== undefined
+    ? quoteEnd + paragraphEndMatch.index
+    : text.length;
+  const previousText = text.slice(0, paragraphStart).trimEnd();
+  const previousBreaks = Array.from(previousText.matchAll(/\n\s*\n/g));
+  const previousBreak = previousBreaks[previousBreaks.length - 1];
+  const previousParagraph = previousBreak?.index !== undefined ? previousText.slice(previousBreak.index + previousBreak[0].length).trim() : previousText;
+  const nextText = text.slice(paragraphEnd).trimStart();
+  const nextBreak = nextText.search(/\n\s*\n/);
+  const nextParagraph = nextBreak >= 0 ? nextText.slice(0, nextBreak).trim() : nextText;
+  const currentBefore = text.slice(paragraphStart, quoteStart);
+  const currentAfter = text.slice(quoteEnd, paragraphEnd);
+
+  return uniqueSpeakerMention(currentBefore, speakerByName)
+    || uniqueSpeakerMention(currentAfter, speakerByName)
+    || uniqueSpeakerMention(previousParagraph, speakerByName)
+    || uniqueSpeakerMention(nextParagraph, speakerByName);
+}
+
+function inferQuoteSpeaker({ text, start, end, before, after, speakerByName }) {
   const namePattern = "([A-Z][a-zA-Z'’-]+(?:\\s+[A-Z][a-zA-Z'’-]+)?)";
   const afterVerbName = new RegExp(`^\\s*[,.!?—–-]*\\s*(?:${dialogueVerbs})\\s+${namePattern}\\b`, "i").exec(after);
   if (afterVerbName) return findKnownSpeaker(afterVerbName[1], speakerByName);
@@ -317,7 +358,7 @@ function inferQuoteSpeaker({ before, after, speakerByName }) {
   if (afterNameVerb) return findKnownSpeaker(afterNameVerb[1], speakerByName);
   const beforeNameVerb = new RegExp(`${namePattern}\\s+(?:${dialogueVerbs})\\s*[,;:—–-]?\\s*$`, "i").exec(before);
   if (beforeNameVerb) return findKnownSpeaker(beforeNameVerb[1], speakerByName);
-  return "";
+  return paragraphContextSpeaker({ text, quoteStart: start, quoteEnd: end, speakerByName });
 }
 
 function cleanSpokenText(value) {
@@ -350,7 +391,6 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
   const fallbackDialogueSpeaker = approvedSpeakers.length === 1 ? approvedSpeakers[0] : null;
   const quotePattern = /[“"]([^”"]+)[”"]/g;
   const ranges = [];
-  const hasExplicitAssignments = manualAssignments.length > 0;
 
   function referenceForSpeaker(speakerName) {
     return speakerByName.get(String(speakerName || "").toLowerCase()) || null;
@@ -392,13 +432,12 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
     const start = match.index || 0;
     const end = start + match[0].length;
     if (ranges.some((range) => start < range.end && end > range.start)) continue;
-    if (hasExplicitAssignments) continue;
 
     const before = text.slice(Math.max(0, start - 140), start);
     const after = text.slice(end, end + 140);
     const quoteText = cleanSpokenText(match[1]);
     const manualSpeaker = manualAssignments.find((assignment) => quoteText === assignment.text || quoteText.includes(assignment.text) || assignment.text.includes(quoteText))?.speaker || "";
-    const speakerName = manualSpeaker || inferQuoteSpeaker({ before, after, speakerByName });
+    const speakerName = manualSpeaker || inferQuoteSpeaker({ text, start, end, before, after, speakerByName });
     const speaker = (speakerName && speakerByName.get(speakerName.toLowerCase()))
       || fallbackDialogueSpeaker
       || null;
