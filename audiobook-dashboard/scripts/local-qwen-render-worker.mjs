@@ -104,6 +104,10 @@ function dbToLinear(db) {
   return Math.pow(10, Number(db || 0) / 20);
 }
 
+function clamp(value, minimum, maximum) {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
 function hashIndex(value, length) {
   if (!length) return 0;
   const digest = String(value || "").split("").reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -849,7 +853,8 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
 
   const effects = approvedSfx.map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
-    const gainDb = Math.max(Number(cuePlan.gain_db ?? -12), -12);
+    const plannedGainDb = Number(cuePlan.gain_db ?? -8);
+    const gainDb = clamp(plannedGainDb + 10, -4, 0);
     return {
       kind: "effect",
       cue,

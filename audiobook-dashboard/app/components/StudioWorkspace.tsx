@@ -119,6 +119,10 @@ function referenceFileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || "No reference WAV";
 }
 
+function soundLibraryPreviewUrl(path: string) {
+  return path ? `/api/sound-library?path=${encodeURIComponent(path)}` : "";
+}
+
 function soundCueTokens(value: string) {
   return Array.from(new Set(value.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []))
     .filter((token) => !["the", "and", "for", "with", "from", "that", "this", "sound", "effect", "cue"].includes(token));
@@ -2029,26 +2033,35 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       <span className="muted">{soundArchiveItems.length ? `${soundArchiveItems.length.toLocaleString()} local sounds indexed` : "Sound library index loading…"}</span>
                     </div>
                     <div className="studio-render-card sound-plan-review">
-                      <strong>Suggested sound moments</strong>
-                      <small>These are suggestions, not automatic production choices. Approving a cue lets the local render worker place a quiet matching asset under the narration.</small>
+                      <strong>Sound layers</strong>
+                      <small>Preview the matched file, check where it lands in the text, then approve the layer if it belongs in the scene.</small>
                       {activeScene.sfx_cues.length ? (
-                        <div className="sound-plan-list">
+                        <div className="sound-layer-list">
                           {activeScene.sfx_cues.map((rawCue) => {
                             const cue = cueWithAssetMatch(rawCue);
                             return (
-                              <label className={`sound-plan-item ${cue.suggested_asset_path ? "" : "unmatched"}`} key={cue.id}>
-                                <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
-                                <div>
-                                  <strong>{cue.time ? `${cue.time} · ` : ""}{cue.label}</strong>
+                              <div className={`sound-layer ${cue.suggested_asset_path ? "" : "unmatched"}`} key={cue.id}>
+                                <div className="sound-layer-track">
+                                  <label>
+                                    <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
+                                    <span>{cue.approved ? "Approved" : "Approve"}</span>
+                                  </label>
+                                  <strong>{cue.time || "0:00"}</strong>
+                                </div>
+                                <div className="sound-layer-main">
+                                  <strong>{cue.label}</strong>
                                   <small>{cue.reason}</small>
                                   {cue.anchor_text && <small>Text: “{cue.anchor_text}”</small>}
-                                </div>
-                                <div>
-                                  <small>Likely asset: {cue.suggested_asset_name || "No strong library match yet"}</small>
-                                  {cue.suggested_asset_path && <small>{cue.suggested_asset_path}</small>}
                                   {cue.search_terms?.length ? <small>Search: {cue.search_terms.join(", ")}</small> : null}
                                 </div>
-                              </label>
+                                <div className="sound-layer-audition">
+                                  <small>{cue.suggested_asset_name || "No strong library match yet"}</small>
+                                  {cue.suggested_asset_path && <small>{cue.suggested_asset_path}</small>}
+                                  {cue.suggested_asset_path && (
+                                    <audio controls preload="none" src={soundLibraryPreviewUrl(cue.suggested_asset_path)} />
+                                  )}
+                                </div>
+                              </div>
                             );
                           })}
                         </div>
