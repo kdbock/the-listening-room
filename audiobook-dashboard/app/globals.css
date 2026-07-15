@@ -126,6 +126,13 @@ label.sound-plan-item input { width:auto; margin-top:3px; }
 .sound-candidate { display:grid; gap:6px; padding:9px; border:1px solid var(--line); border-radius:10px; background:#f8f4ea; }
 .sound-candidate strong { font-size:12px; }
 .sound-candidate .button { justify-self:start; padding:7px 10px; font-size:11px; }
+.sound-bank-panel { display:grid; gap:12px; }
+.sound-bank-controls { display:grid; grid-template-columns:minmax(220px,1fr) 160px; gap:10px; }
+.sound-bank-results { display:grid; gap:10px; max-height:520px; overflow:auto; padding-right:4px; }
+.sound-bank-result { display:grid; grid-template-columns:minmax(260px,1fr) minmax(220px,.8fr) auto; gap:12px; align-items:center; padding:10px; border:1px solid var(--line); border-radius:12px; background:#f8f4ea; }
+.sound-bank-result small { color:var(--muted); line-height:1.45; overflow-wrap:anywhere; }
+.sound-bank-result audio { width:100%; }
+.sound-bank-result .button { white-space:nowrap; }
 button,input,select,textarea { font:inherit; }
 button { color:inherit; }
 .topbar { height:86px; padding:0 clamp(24px,5vw,76px); display:flex; align-items:center; justify-content:space-between; border-bottom:1px solid rgba(38,48,44,.15); background:rgba(244,240,231,.9); position:sticky; top:0; z-index:20; backdrop-filter:blur(14px); }

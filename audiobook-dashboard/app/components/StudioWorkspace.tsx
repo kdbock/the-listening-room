@@ -215,6 +215,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [soundArchiveItems, setSoundArchiveItems] = useState<SoundArchiveItem[]>([]);
   const [sfxSearchDrafts, setSfxSearchDrafts] = useState<Record<string, string>>({});
   const [sfxTimelineDrafts, setSfxTimelineDrafts] = useState<Record<string, number>>({});
+  const [soundBankSearch, setSoundBankSearch] = useState("");
+  const [soundBankTime, setSoundBankTime] = useState("0:00");
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedCharacterType, setSelectedCharacterType] = useState("");
   const [selectedDialogueTone, setSelectedDialogueTone] = useState("");
@@ -269,6 +271,16 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     return soundArchiveItems
       .map((item) => ({ ...item, score: scoreSoundMatch(item, tokens) }))
       .filter((item) => item.score >= minimumScore)
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+      .slice(0, limit);
+  }
+
+  function soundBankResults(query: string, limit = 30): MatchedSound[] {
+    const tokens = soundCueTokens(query);
+    if (!tokens.length || !soundArchiveItems.length) return [];
+    return soundArchiveItems
+      .map((item) => ({ ...item, score: scoreSoundMatch(item, tokens) }))
+      .filter((item) => item.score >= 2)
       .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
       .slice(0, limit);
   }
@@ -1308,6 +1320,30 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSceneStatus(`Selected ${asset.name} for ${cue.label}.`);
   }
 
+  async function addSoundBankCue(asset: SoundArchiveItem) {
+    if (!activeScene) return;
+    const time = soundBankTime.trim() || "0:00";
+    const cue: StudioCue = {
+      id: `sfx-bank-${Date.now()}`,
+      label: asset.name,
+      reason: `Added from Sound Bank search${soundBankSearch.trim() ? `: ${soundBankSearch.trim()}` : ""}.`,
+      approved: false,
+      time,
+      source: `${asset.source || "Sound library"} · ${asset.pack || asset.kind || "selected asset"}`,
+      search_terms: soundCueTokens(`${soundBankSearch} ${asset.name}`),
+      suggested_asset_name: asset.name,
+      suggested_asset_path: asset.relativePath,
+    };
+    await updateScene({
+      ...activeScene,
+      sfx_cues: [...activeScene.sfx_cues, cue],
+      approvals: { ...activeScene.approvals, sfx: false },
+      final_mix_status: "voices_approved",
+    });
+    setSfxTimelineDrafts((current) => ({ ...current, [cue.id]: parseTimestamp(time) }));
+    setSceneStatus(`Added ${asset.name} at ${time}. Use the timeline slider to place it exactly.`);
+  }
+
   async function markReadyToRender() {
     if (!activeScene) return;
     const previewRows = renderPreviewRows(activeScene);
@@ -2115,6 +2151,31 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                     <div className="actions">
                       <button className="button" onClick={refreshSfxSuggestions}>Analyze text for sound moments</button>
                       <span className="muted">{soundArchiveItems.length ? `${soundArchiveItems.length.toLocaleString()} local sounds indexed` : "Sound library index loading…"}</span>
+                    </div>
+                    <div className="studio-render-card sound-bank-panel">
+                      <strong>Sound Bank</strong>
+                      <small>Search the entire local library, preview files, then add the chosen sound to this episode timeline.</small>
+                      <div className="sound-bank-controls">
+                        <input value={soundBankSearch} onChange={(event) => setSoundBankSearch(event.target.value)} placeholder="Search sounds: door, footsteps, truck, wind…" />
+                        <input value={soundBankTime} onChange={(event) => setSoundBankTime(event.target.value)} placeholder="Timeline time, e.g. 1:24" />
+                      </div>
+                      {soundBankSearch.trim() ? (
+                        <div className="sound-bank-results">
+                          {soundBankResults(soundBankSearch).length ? soundBankResults(soundBankSearch).map((candidate) => (
+                            <div className="sound-bank-result" key={candidate.relativePath}>
+                              <div>
+                                <strong>{candidate.name}</strong>
+                                <small>{candidate.source || "Sound library"} · {candidate.pack || candidate.kind || "asset"} · score {candidate.score}</small>
+                                <small>{candidate.relativePath}</small>
+                              </div>
+                              <audio controls preload="none" src={soundLibraryPreviewUrl(candidate.relativePath)} />
+                              <button className="button" onClick={() => addSoundBankCue(candidate)}>Add to timeline</button>
+                            </div>
+                          )) : <p className="materials-empty">No matches. Try a simpler word or a different object/action.</p>}
+                        </div>
+                      ) : (
+                        <p className="materials-empty">Type a word to search the local sound bank.</p>
+                      )}
                     </div>
                     <div className="studio-render-card sound-plan-review">
                       <strong>Sound layers</strong>
