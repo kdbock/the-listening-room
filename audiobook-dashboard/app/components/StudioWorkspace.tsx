@@ -120,7 +120,7 @@ function referenceFileName(path: string) {
 }
 
 function soundLibraryPreviewUrl(path: string) {
-  return path ? `/sound-library/${path.split("/").map(encodeURIComponent).join("/")}` : "";
+  return path ? `http://127.0.0.1:3217/sound-library/${path.split("/").map(encodeURIComponent).join("/")}` : "";
 }
 
 function soundCueTokens(value: string) {

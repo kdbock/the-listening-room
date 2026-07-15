@@ -41,4 +41,3 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
-/public/sound-library
