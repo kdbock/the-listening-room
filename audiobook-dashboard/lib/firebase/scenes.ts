@@ -45,6 +45,12 @@ export type StudioCue = {
   time?: string;
   source?: string;
   license?: string;
+  anchor_text?: string;
+  start?: number;
+  end?: number;
+  search_terms?: string[];
+  suggested_asset_name?: string;
+  suggested_asset_path?: string;
 };
 
 export type SoundDesignPlanItem = {

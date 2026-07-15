@@ -13,6 +13,19 @@ import { getDownloadURL, ref } from "firebase/storage";
 
 type TabKey = "script" | "voice" | "characters" | "sfx" | "music" | "render";
 
+type SoundArchiveItem = {
+  id: string;
+  name: string;
+  source?: string;
+  bundle?: string;
+  pack?: string;
+  kind?: string;
+  relativePath: string;
+  tags?: string[];
+};
+
+type MatchedSound = SoundArchiveItem & { score: number };
+
 const tabs: Array<{ key: TabKey; label: string }> = [
   { key: "script", label: "Text" },
   { key: "voice", label: "Narrator" },
@@ -106,6 +119,29 @@ function referenceFileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).pop() || "No reference WAV";
 }
 
+function soundCueTokens(value: string) {
+  return Array.from(new Set(value.toLowerCase().match(/[a-z0-9]{3,}/g) ?? []))
+    .filter((token) => !["the", "and", "for", "with", "from", "that", "this", "sound", "effect", "cue"].includes(token));
+}
+
+function scoreSoundMatch(item: SoundArchiveItem, tokens: string[]) {
+  const haystack = [
+    item.name,
+    item.kind,
+    item.pack,
+    item.bundle,
+    item.relativePath,
+    ...(Array.isArray(item.tags) ? item.tags : []),
+  ].join(" ").toLowerCase();
+  let score = 0;
+  for (const token of tokens) {
+    if (haystack.includes(token)) score += token.length > 5 ? 4 : 2;
+  }
+  if (/\b(test|dtmf|white noise|channel test|designed|whoosh|sweep|impact|magic|spell|ghost|horror|music|drone|riser)\b/i.test(haystack)) score -= 8;
+  if (/\b(voice|male|female|yell|scream|monster|creature)\b/i.test(haystack)) score -= 5;
+  return score;
+}
+
 function speakerColor(speaker: StudioSpeaker, index: number) {
   return speaker.color || speakerColors[index % speakerColors.length];
 }
@@ -152,6 +188,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manualSpeakerName, setManualSpeakerName] = useState("");
   const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
   const [referenceAuditionUrls, setReferenceAuditionUrls] = useState<Record<string, string>>({});
+  const [soundArchiveItems, setSoundArchiveItems] = useState<SoundArchiveItem[]>([]);
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedCharacterType, setSelectedCharacterType] = useState("");
   const [selectedDialogueTone, setSelectedDialogueTone] = useState("");
@@ -161,6 +198,31 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const attemptedAutoImport = useRef(false);
 
   const characterTypes = voicePatterns.length ? voicePatterns : starterCharacterTypes;
+
+  function matchCueToArchive(cue: { label: string; reason?: string; anchor_text?: string; search_terms?: string[] }): MatchedSound | null {
+    if (!soundArchiveItems.length) return null;
+    const tokens = Array.from(new Set([
+      ...soundCueTokens(`${cue.label} ${cue.reason || ""} ${cue.anchor_text || ""}`),
+      ...(cue.search_terms ?? []).flatMap((term) => soundCueTokens(term)),
+    ]));
+    const ranked = soundArchiveItems
+      .map((item) => ({ ...item, score: scoreSoundMatch(item, tokens) }))
+      .filter((item) => item.score >= 8)
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
+    return ranked[0] ?? null;
+  }
+
+  function cueWithAssetMatch(cue: SceneRecord["sfx_cues"][number]) {
+    if (cue.suggested_asset_path) return cue;
+    const match = matchCueToArchive(cue);
+    if (!match) return cue;
+    return {
+      ...cue,
+      suggested_asset_name: match.name,
+      suggested_asset_path: match.relativePath,
+      source: cue.source || `${match.source || "Sound library"} · ${match.pack || match.kind || "matched asset"}`,
+    };
+  }
 
   function characterTypeLabel(value?: string) {
     return characterTypes.find((option) => option.value === value)?.label || "No character type";
@@ -578,6 +640,19 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   useEffect(() => {
     loadWorkspace();
   }, [bookId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/sound-archive-index.json")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.items)) setSoundArchiveItems(data.items);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (loading || importing || attemptedAutoImport.current || scenes.length || !book) return;
@@ -1126,7 +1201,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function toggleCue(kind: "sfx_cues" | "ambience_cues", cueId: string) {
     if (!activeScene) return;
-    const cues = activeScene[kind].map((cue) => (cue.id === cueId ? { ...cue, approved: !cue.approved } : cue));
+    const cues = activeScene[kind].map((cue) => {
+      if (cue.id !== cueId) return cue;
+      const enrichedCue = kind === "sfx_cues" ? cueWithAssetMatch(cue) : cue;
+      return { ...enrichedCue, approved: !cue.approved };
+    });
     await updateScene({
       ...activeScene,
       [kind]: cues,
@@ -1240,14 +1319,16 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   async function refreshSfxSuggestions() {
     if (!activeScene) return;
     const existingChoices = activeScene.sfx_cues.filter((cue) => cue.approved || cue.reason === "Added manually in the studio.");
-    const existingLabels = new Set(existingChoices.map((cue) => cue.label.toLowerCase()));
-    const recommendations = recommendSfxCues(activeScene.text).filter((cue) => !existingLabels.has(cue.label.toLowerCase()));
+    const existingKeys = new Set(existingChoices.map((cue) => `${cue.label.toLowerCase()}-${cue.start ?? cue.time ?? ""}`));
+    const recommendations = recommendSfxCues(activeScene.text)
+      .map(cueWithAssetMatch)
+      .filter((cue) => !existingKeys.has(`${cue.label.toLowerCase()}-${cue.start ?? cue.time ?? ""}`));
     await updateScene({
       ...activeScene,
       sfx_cues: [...existingChoices, ...recommendations],
       approvals: { ...activeScene.approvals, sfx: false },
     });
-    setSceneStatus(`Prepared ${recommendations.length} episode-specific sound suggestion${recommendations.length === 1 ? "" : "s"}. Nothing was approved automatically.`);
+    setSceneStatus(`Prepared ${recommendations.length} text-anchored sound suggestion${recommendations.length === 1 ? "" : "s"} from the local library index. Nothing was approved automatically.`);
   }
 
   async function refreshAmbienceSuggestions() {
@@ -1942,17 +2023,36 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
                 {tab === "sfx" && (
                   <>
-                    <p className="muted">Review several possible moments, approve only the ones that help, and add your own where needed. Refreshing suggestions never auto-approves them.</p>
+                    <p className="muted">Let the app find physical sound moments from the episode text, match likely assets from the local sound library, then approve only the suggestions that actually help the scene.</p>
                     <div className="actions">
-                      <button className="button" onClick={refreshSfxSuggestions}>Suggest sound effects for this episode</button>
+                      <button className="button" onClick={refreshSfxSuggestions}>Analyze text for sound moments</button>
+                      <span className="muted">{soundArchiveItems.length ? `${soundArchiveItems.length.toLocaleString()} local sounds indexed` : "Sound library index loading…"}</span>
                     </div>
-                    <div className="studio-list">
-                      {activeScene.sfx_cues.length ? activeScene.sfx_cues.map((cue) => (
-                        <label className="studio-cue" key={cue.id}>
-                          <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
-                          <span><strong>{cue.time ? `${cue.time} · ` : ""}{cue.label}</strong><small>{cue.source || cue.reason}{cue.license ? ` · ${cue.license}` : ""}</small></span>
-                        </label>
-                      )) : <p className="materials-empty">No sound-effect moments were suggested for this episode yet.</p>}
+                    <div className="studio-render-card sound-plan-review">
+                      <strong>Suggested sound moments</strong>
+                      <small>These are suggestions, not automatic production choices. Approving a cue lets the local render worker place a quiet matching asset under the narration.</small>
+                      {activeScene.sfx_cues.length ? (
+                        <div className="sound-plan-list">
+                          {activeScene.sfx_cues.map((rawCue) => {
+                            const cue = cueWithAssetMatch(rawCue);
+                            return (
+                              <label className={`sound-plan-item ${cue.suggested_asset_path ? "" : "unmatched"}`} key={cue.id}>
+                                <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
+                                <div>
+                                  <strong>{cue.time ? `${cue.time} · ` : ""}{cue.label}</strong>
+                                  <small>{cue.reason}</small>
+                                  {cue.anchor_text && <small>Text: “{cue.anchor_text}”</small>}
+                                </div>
+                                <div>
+                                  <small>Likely asset: {cue.suggested_asset_name || "No strong library match yet"}</small>
+                                  {cue.suggested_asset_path && <small>{cue.suggested_asset_path}</small>}
+                                  {cue.search_terms?.length ? <small>Search: {cue.search_terms.join(", ")}</small> : null}
+                                </div>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ) : <p className="materials-empty">No sound-effect moments were suggested for this episode yet.</p>}
                     </div>
                     <div className="studio-list">
                       <input value={sfxDraft.time} onChange={(event) => setSfxDraft((current) => ({ ...current, time: event.target.value }))} placeholder="Timestamp" />

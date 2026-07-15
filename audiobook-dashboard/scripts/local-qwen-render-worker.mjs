@@ -127,7 +127,10 @@ function summarizeScene(text) {
 }
 
 function cueSearchTerms(cue) {
-  return cueTokens(`${cue.label || ""} ${cue.reason || ""} ${cue.source || ""}`).slice(0, 8);
+  return Array.from(new Set([
+    ...cueTokens(`${cue.label || ""} ${cue.reason || ""} ${cue.source || ""} ${cue.anchor_text || ""}`),
+    ...(Array.isArray(cue.search_terms) ? cue.search_terms.flatMap((term) => cueTokens(term)) : []),
+  ])).slice(0, 12);
 }
 
 function deterministicDesignerPlan(scene, cues) {
@@ -194,6 +197,23 @@ function matchCueToSound(cuePlan, soundIndex, preferredKinds) {
   const absolutePath = path.join(soundLibraryRoot, best.relativePath);
   if (!fs.existsSync(absolutePath)) return null;
   return { ...best, absolutePath, score: ranked[0].score };
+}
+
+function explicitCueAsset(cue) {
+  const relativePath = String(cue.suggested_asset_path || "").trim();
+  if (!relativePath) return null;
+  const absolutePath = path.join(soundLibraryRoot, relativePath);
+  if (!fs.existsSync(absolutePath)) return null;
+  return {
+    id: relativePath,
+    name: cue.suggested_asset_name || path.basename(relativePath),
+    relativePath,
+    absolutePath,
+    source: cue.source || "Approved cue asset",
+    kind: "Approved",
+    tags: cueSearchTerms(cue),
+    score: 999,
+  };
 }
 
 function writeJson(filePath, data) {
@@ -739,11 +759,11 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
   const soundIndex = loadSoundIndex();
   const approvedSfx = (Array.isArray(scene.sfx_cues) ? scene.sfx_cues : []).filter((cue) => cue.approved).map((cue) => ({ ...cue, kind: "effect" }));
   const approvedAmbience = (Array.isArray(scene.ambience_cues) ? scene.ambience_cues : []).filter((cue) => cue.approved).map((cue) => ({ ...cue, kind: "ambience" }));
-  const approvedCues = [...approvedSfx.slice(0, 3), ...approvedAmbience.slice(0, 1)];
+  const approvedCues = [...approvedSfx, ...approvedAmbience];
   const designer = await buildDesignerPlanWithLocalAi({ scene, cues: approvedCues, paths, python });
   const plannedById = new Map((Array.isArray(designer.cue_plan) ? designer.cue_plan : []).map((cuePlan, index) => [String(cuePlan.id || `cue-${index + 1}`), cuePlan]));
 
-  const effects = approvedSfx.slice(0, 3).map((cue, index) => {
+  const effects = approvedSfx.map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
     const gainDb = Math.max(Number(cuePlan.gain_db ?? -12), -12);
     return {
@@ -758,11 +778,11 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
       fade_out: Number(cuePlan.fade_out ?? 0.2),
       reason: cuePlan.reason || cue.reason || "",
       avoid: cuePlan.avoid || "Do not distract from narration.",
-      asset: matchCueToSound(cuePlan, soundIndex, ["Foley", "Water", "Weather", "Transportation"]),
+      asset: explicitCueAsset(cue) || matchCueToSound(cuePlan, soundIndex, ["Foley", "Water", "Weather", "Transportation", "General"]),
     };
   });
 
-  const ambience = approvedAmbience.slice(0, 1).map((cue, index) => {
+  const ambience = approvedAmbience.map((cue, index) => {
     const cuePlan = plannedById.get(String(cue.id || `cue-${index + 1}`)) || deterministicDesignerPlan(scene, [cue]).cue_plan[0];
     const gainDb = Math.min(Math.max(Number(cuePlan.gain_db ?? -26), -30), -22);
     return {

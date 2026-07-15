@@ -105,6 +105,8 @@ body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--fo
 .sound-plan-review { display:grid; gap:12px; }
 .sound-plan-list { display:grid; gap:10px; }
 .sound-plan-item { display:grid; grid-template-columns:minmax(180px,.65fr) minmax(0,1fr); gap:14px; padding:12px 0; border-top:1px solid var(--line); }
+label.sound-plan-item { grid-template-columns:auto minmax(180px,.65fr) minmax(0,1fr); cursor:pointer; align-items:start; }
+label.sound-plan-item input { width:auto; margin-top:3px; }
 .sound-plan-item.unmatched strong { color:#8a4e45; }
 .sound-plan-item small { display:block; color:var(--muted); line-height:1.5; overflow-wrap:anywhere; }
 .sound-plan-unmatched { display:grid; gap:5px; padding:10px 12px; background:#fff0df; color:#8a4e45; }

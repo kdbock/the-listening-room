@@ -5,15 +5,17 @@ const speakerColors = ["#f4c7c3", "#c8dfc8", "#c8d8f0", "#f1d29b", "#d6c5ee", "#
 const masculineNames = ["gregory", "greg", "john", "michael", "david", "daniel", "james", "robert", "william", "the ferryman"];
 const feminineNames = ["kimberly", "megan", "meg", "kristy", "sarah", "nix", "orra", "ressa", "tamsin", "lio", "vessa"];
 
-const sfxRules: Array<{ terms: string[]; required?: string[]; label: string; reason: string }> = [
-  { terms: ["knock", "knocked", "knocking"], label: "Door knock", reason: "A specific knock is written into the action." },
-  { terms: ["door opened", "door closed", "door slammed", "opened the door", "closed the door", "slammed the door"], label: "Door open / close", reason: "A specific door action is written into the scene." },
-  { terms: ["footsteps", "heels clicked", "boots thudded", "stairs creaked"], label: "Specific footsteps", reason: "The text calls out audible movement, not just general walking." },
-  { terms: ["engine started", "engine idled", "car door", "truck door", "tires screeched"], label: "Vehicle action", reason: "A concrete vehicle sound is written into the action." },
-  { terms: ["phone rang", "phone buzzed", "text alert", "voicemail beep"], label: "Phone alert", reason: "The phone makes an explicit audible sound." },
-  { terms: ["glass shattered", "glass broke", "plate shattered", "cup shattered"], label: "Breaking glass", reason: "The scene contains a sharp break event." },
-  { terms: ["thunder cracked", "thunder rumbled", "rain hit", "rain hammered"], label: "Weather accent", reason: "The weather is doing something audible at this moment." },
-  { terms: ["bell rang", "bells rang", "clock chimed", "alarm sounded"], label: "Bell / alarm", reason: "A clear source sound is named in the text." },
+const sfxRules: Array<{ terms: string[]; required?: string[]; label: string; reason: string; search_terms: string[] }> = [
+  { terms: ["knock", "knocked", "knocking"], label: "Door knock", reason: "A specific knock is written into the action.", search_terms: ["door", "knock", "wood", "tap"] },
+  { terms: ["door opened", "door closed", "door slammed", "opened the door", "closed the door", "slammed the door"], label: "Door open / close", reason: "A specific door action is written into the scene.", search_terms: ["door", "open", "close", "slam", "creak"] },
+  { terms: ["footsteps", "heels clicked", "boots thudded", "stairs creaked", "walked straight", "followed her"], label: "Footsteps / movement", reason: "The text calls out audible movement that could support staging.", search_terms: ["footsteps", "steps", "walk", "heels", "boots", "floor"] },
+  { terms: ["engine started", "engine idled", "car door", "truck door", "storage truck", "waiting storage truck", "drive away", "drove away", "tires screeched"], label: "Vehicle / truck movement", reason: "A concrete vehicle or truck action is present in the scene.", search_terms: ["truck", "vehicle", "car", "engine", "drive", "door"] },
+  { terms: ["phone rang", "phone buzzed", "text alert", "text me", "voicemail beep"], label: "Phone / text cue", reason: "The text references a phone/text moment that can be supported if desired.", search_terms: ["phone", "text", "notification", "alert", "buzz"] },
+  { terms: ["glass shattered", "glass broke", "plate shattered", "cup shattered"], label: "Breaking glass", reason: "The scene contains a sharp break event.", search_terms: ["glass", "break", "shatter", "smash"] },
+  { terms: ["thunder cracked", "thunder rumbled", "rain hit", "rain hammered"], label: "Weather accent", reason: "The weather is doing something audible at this moment.", search_terms: ["thunder", "rain", "storm", "weather"] },
+  { terms: ["bell rang", "bells rang", "clock chimed", "alarm sounded"], label: "Bell / alarm", reason: "A clear source sound is named in the text.", search_terms: ["bell", "chime", "alarm", "clock"] },
+  { terms: ["keys", "set the keys", "key turned", "lock clicked"], label: "Keys / lock detail", reason: "Small key or lock action appears in the text.", search_terms: ["keys", "key", "lock", "jingle", "metal"] },
+  { terms: ["boxes", "box", "arms laden with boxes", "packed", "packing"], label: "Boxes / packing movement", reason: "The scene includes moving or handling boxes.", search_terms: ["box", "cardboard", "packing", "movement", "foley"] },
 ];
 
 const ambienceRules: Array<{ terms: string[]; label: string; reason: string }> = [
@@ -101,35 +103,69 @@ function inferSpeakerGender(text: string, name: string): StudioSpeaker["gender"]
   return "unknown";
 }
 
-function cueTime(text: string, terms: string[]) {
+function cuePositions(text: string, terms: string[]) {
   const lower = text.toLowerCase();
-  const positions = terms.map((term) => lower.indexOf(term)).filter((position) => position >= 0);
-  const position = positions.length ? Math.min(...positions) : 0;
+  const positions: Array<{ position: number; term: string }> = [];
+  for (const term of terms) {
+    const lowerTerm = term.toLowerCase();
+    let position = lower.indexOf(lowerTerm);
+    while (position >= 0) {
+      positions.push({ position, term });
+      position = lower.indexOf(lowerTerm, position + lowerTerm.length);
+    }
+  }
+  return positions.sort((left, right) => left.position - right.position);
+}
+
+function cueTime(text: string, position: number) {
   const wordsBefore = text.slice(0, position).trim().split(/\s+/).filter(Boolean).length;
   const seconds = Math.max(0, Math.round(wordsBefore / 2.5));
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-function buildCues(text: string, rules: Array<{ terms: string[]; required?: string[]; label: string; reason: string }>, limit = 6): StudioCue[] {
+function cueAnchor(text: string, position: number) {
+  const sentenceStart = Math.max(text.lastIndexOf(".", position), text.lastIndexOf("\n", position), 0);
+  const sentenceEndCandidates = [text.indexOf(".", position + 1), text.indexOf("\n", position + 1)].filter((entry) => entry > position);
+  const sentenceEnd = sentenceEndCandidates.length ? Math.min(...sentenceEndCandidates) + 1 : Math.min(text.length, position + 220);
+  return text.slice(sentenceStart === 0 ? 0 : sentenceStart + 1, sentenceEnd).replace(/\s+/g, " ").trim();
+}
+
+function buildCues(text: string, rules: Array<{ terms: string[]; required?: string[]; label: string; reason: string; search_terms?: string[] }>): StudioCue[] {
   const lower = text.toLowerCase();
-  return rules
-    .filter((rule) => rule.terms.some((term) => lower.includes(term)) && (!rule.required || rule.required.some((term) => lower.includes(term))))
-    .slice(0, limit)
-    .map((rule, index) => ({
-      id: `${rule.label}-${index}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-      label: rule.label,
-      reason: rule.reason,
-      approved: false,
-      time: cueTime(text, rule.terms),
-    }));
+  const cues: StudioCue[] = [];
+  for (const rule of rules) {
+    if (!rule.terms.some((term) => lower.includes(term)) || (rule.required && !rule.required.some((term) => lower.includes(term)))) continue;
+    const positions = cuePositions(text, rule.terms);
+    const acceptedPositions: number[] = [];
+    for (const match of positions) {
+      if (acceptedPositions.some((position) => Math.abs(position - match.position) < 80)) continue;
+      acceptedPositions.push(match.position);
+      const start = match.position;
+      const matchedTerm = match.term;
+      const end = Math.min(text.length, start + matchedTerm.length);
+      cues.push({
+        id: `${rule.label}-${cues.length}-${start}`.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        label: rule.label,
+        reason: rule.reason,
+        approved: false,
+        time: cueTime(text, start),
+        anchor_text: cueAnchor(text, start),
+        start,
+        end,
+        search_terms: rule.search_terms ?? rule.terms,
+        source: "Suggested from episode text.",
+      });
+    }
+  }
+  return cues.sort((left, right) => (left.start ?? 0) - (right.start ?? 0));
 }
 
 export function recommendSfxCues(text: string) {
-  return buildCues(text, sfxRules, 3);
+  return buildCues(text, sfxRules);
 }
 
 export function recommendAmbienceCues(text: string) {
-  return buildCues(text, ambienceRules, 1);
+  return buildCues(text, ambienceRules);
 }
 
 export function recommendSpeakersForEpisode(text: string) {
