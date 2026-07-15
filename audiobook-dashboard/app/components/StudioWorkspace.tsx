@@ -102,6 +102,10 @@ function speakerNeedsMasculineReference(speaker: StudioSpeaker) {
   return speaker.gender === "masculine" && !speakerHasApprovedReference(speaker) && !speaker.approved_voice;
 }
 
+function referenceFileName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() || "No reference WAV";
+}
+
 function speakerColor(speaker: StudioSpeaker, index: number) {
   return speaker.color || speakerColors[index % speakerColors.length];
 }
@@ -457,6 +461,25 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   function dialogueLineSegments(scene: SceneRecord) {
     return highlightedDialogueSegments(scene).filter((segment) => segment.speaker);
+  }
+
+  function renderPreviewRows(scene: SceneRecord) {
+    return dialogueLineSegments(scene)
+      .filter((segment) => segment.speaker)
+      .map((segment) => {
+        const assignment = assignmentForSegment(scene, segment);
+        const speaker = scene.speakers.find((entry) => entry.name === segment.speaker);
+        return {
+          key: `${segment.start}-${segment.end}-${segment.speaker}`,
+          speakerName: segment.speaker || "Unassigned",
+          text: segment.text.trim(),
+          tone: assignment?.tone || "default",
+          urgency: assignment?.urgency || "medium",
+          profile: characterTypeLabel(speaker?.character_type),
+          reference: speaker?.reference_audio_path || "",
+          missing: segment.missed || segment.speaker === "Unassigned" || !speaker || !speaker.reference_audio_path,
+        };
+      });
   }
 
   function assignmentForSegment(scene: SceneRecord, segment: { start: number; end: number; text: string; speaker?: string }) {
@@ -1120,6 +1143,16 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
 
   async function markReadyToRender() {
     if (!activeScene) return;
+    const previewRows = renderPreviewRows(activeScene);
+    const blockedRows = previewRows.filter((row) => row.missing);
+    if (!previewRows.length) {
+      setSceneStatus("No dialogue assignments are ready for character rendering. Return to Speakers and assign quoted lines before rendering.");
+      return;
+    }
+    if (blockedRows.length) {
+      setSceneStatus(`Fix ${blockedRows.length} voice render preview row${blockedRows.length === 1 ? "" : "s"} before rendering.`);
+      return;
+    }
     await updateScene({
       ...activeScene,
       approvals: { ...activeScene.approvals, draft: true, sfx: true, music: true },
@@ -1980,6 +2013,29 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           ? `${renderJob.status} · ${renderJob.render_target.replaceAll("_", " ")} · requested ${new Date(renderJob.requested_at).toLocaleString()}`
                           : "No render job queued yet."}
                       </small>
+                    </div>
+                    <div className="studio-render-card sound-plan-review">
+                      <strong>Voice render preview</strong>
+                      <small>Check this before rendering: every dialogue line should show the correct speaker, profile, tone, urgency, and reference WAV.</small>
+                      {renderPreviewRows(activeScene).length ? (
+                        <div className="sound-plan-list">
+                          {renderPreviewRows(activeScene).map((row) => (
+                            <div className={`sound-plan-item ${row.missing ? "unmatched" : ""}`} key={row.key}>
+                              <div>
+                                <strong>{row.speakerName}</strong>
+                                <small>{row.profile} · {row.tone} · urgency {row.urgency}</small>
+                              </div>
+                              <div>
+                                <small>{row.text}</small>
+                                <small>Reference: {referenceFileName(row.reference)}</small>
+                                {row.missing && <small>Needs attention before render.</small>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <small>No dialogue assignments are ready for character rendering. Return to Speakers and assign quoted lines before rendering.</small>
+                      )}
                     </div>
                     <div className="studio-render-card">
                       <strong>Render result</strong>

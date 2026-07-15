@@ -369,6 +369,33 @@ function cleanSpokenText(value) {
     .trim();
 }
 
+function performanceInstruction({ speaker, tone, urgency }) {
+  const toneKey = String(tone || "").trim().toLowerCase();
+  const urgencyKey = String(urgency || "").trim().toLowerCase();
+  const toneRules = {
+    dry: "Use a dry, restrained delivery with minimal sentiment and clean, matter-of-fact timing.",
+    warm: "Use a warmer delivery with gentle phrasing, softened attack, and natural emotional openness.",
+    snarky: "Use crisp comic timing, guarded wit, and a slight edge without becoming broad or cartoonish.",
+    scared: "Use controlled fear: quicker breath, tighter phrasing, and vulnerability without screaming.",
+    angry: "Use restrained anger: clipped pacing, firmer consonants, lower emotional temperature, and tension under control.",
+    tender: "Use a tender intimate delivery: quieter energy, slower phrasing, softer attack, and emotional care.",
+    teasing: "Use light teasing warmth with playful timing and a small smile in the voice.",
+    deadpan: "Use flat, dry understatement with very little overt emotion and precise timing.",
+    urgent: "Use urgency with forward momentum, tighter pauses, and focused intensity without shouting.",
+  };
+  const urgencyRules = {
+    low: "Keep the pace relaxed and unhurried.",
+    medium: "Keep the pace natural and conversational.",
+    high: "Increase momentum and shorten pauses while staying intelligible.",
+  };
+  return [
+    `Perform this line as ${speaker || "the speaker"}. Keep the approved reference voice identity consistent.`,
+    toneRules[toneKey] || "Use the approved reference voice with natural audiobook delivery.",
+    urgencyRules[urgencyKey] || urgencyRules.medium,
+    "Do not change the words. Do not overact. Keep the performance believable for fiction dialogue.",
+  ].join(" ");
+}
+
 function buildNarrationUnits({ text, speakers, assignments, bank }) {
   const approvedSpeakers = (Array.isArray(speakers) ? speakers : [])
     .filter((speaker) => speaker.name && speaker.name !== "Unassigned")
@@ -464,6 +491,7 @@ function buildNarrationUnits({ text, speakers, assignments, bank }) {
       speaker: range.speaker.name,
       tone: range.tone || "",
       urgency: range.urgency || "",
+      performance_instruction: performanceInstruction({ speaker: range.speaker.name, tone: range.tone, urgency: range.urgency }),
       reference_audio: range.speaker.reference.audio,
       reference_text: range.speaker.reference.text,
     });

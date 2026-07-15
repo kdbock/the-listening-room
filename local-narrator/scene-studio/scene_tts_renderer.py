@@ -139,6 +139,34 @@ def find_generated_wav(segments_dir: Path, prefix: str) -> Path | None:
     return matches[0] if matches else None
 
 
+def performance_instruction(speaker: str, tone: str, urgency: str) -> str:
+    tone_key = tone.strip().casefold()
+    urgency_key = urgency.strip().casefold()
+    tone_rules = {
+        "dry": "Use a dry, restrained delivery with minimal sentiment and clean, matter-of-fact timing.",
+        "warm": "Use a warmer delivery with gentle phrasing, softened attack, and natural emotional openness.",
+        "snarky": "Use crisp comic timing, guarded wit, and a slight edge without becoming broad or cartoonish.",
+        "scared": "Use controlled fear: quicker breath, tighter phrasing, and vulnerability without screaming.",
+        "angry": "Use restrained anger: clipped pacing, firmer consonants, lower emotional temperature, and tension under control.",
+        "tender": "Use a tender intimate delivery: quieter energy, slower phrasing, softer attack, and emotional care.",
+        "teasing": "Use light teasing warmth with playful timing and a small smile in the voice.",
+        "deadpan": "Use flat, dry understatement with very little overt emotion and precise timing.",
+        "urgent": "Use urgency with forward momentum, tighter pauses, and focused intensity without shouting.",
+    }
+    urgency_rules = {
+        "low": "Keep the pace relaxed and unhurried.",
+        "medium": "Keep the pace natural and conversational.",
+        "high": "Increase momentum and shorten pauses while staying intelligible.",
+    }
+    rules = [
+        f"Perform this line as {speaker}. Keep the approved reference voice identity consistent.",
+        tone_rules.get(tone_key, "Use the approved reference voice with natural audiobook delivery."),
+        urgency_rules.get(urgency_key, urgency_rules["medium"]),
+        "Do not change the words. Do not overact. Keep the performance believable for fiction dialogue.",
+    ]
+    return " ".join(rules)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--plan", type=Path, required=True)
@@ -149,7 +177,7 @@ def main() -> None:
     if output.exists():
         raise FileExistsError(f"Refusing to overwrite {output}")
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
-    units: list[tuple[str, bool, str, str, str, str, str]] = []
+    units: list[tuple[str, bool, str, str, str, str, str, str]] = []
     for planned in plan.get("units", []):
         paragraphs = [p.strip() for p in str(planned.get("text", "")).split("\n\n") if p.strip()]
         tone = str(planned.get("tone", "")).strip()
@@ -168,6 +196,7 @@ def main() -> None:
             units.extend((
                 sentence, ends_paragraph, str(planned["speaker"]),
                 str(planned["reference_audio"]), str(planned["reference_text"]), tone, urgency,
+                str(planned.get("performance_instruction") or "").strip(),
             ) for sentence, ends_paragraph in render_sentences)
     if not units:
         raise ValueError("No sentences were found in the approved scene text.")
@@ -177,8 +206,9 @@ def main() -> None:
     assembled: list[np.ndarray] = []
     sample_rate = 24000
     manifest_units = []
-    for index, (sentence, ends_paragraph, speaker, reference_audio, reference_text, tone, urgency) in enumerate(units, start=1):
-        digest = hashlib.sha256(f"{speaker}\n{sentence}".encode("utf-8")).hexdigest()[:10]
+    for index, (sentence, ends_paragraph, speaker, reference_audio, reference_text, tone, urgency, planned_instruction) in enumerate(units, start=1):
+        instruction = planned_instruction or performance_instruction(speaker, tone, urgency)
+        digest = hashlib.sha256(f"{speaker}\n{sentence}\n{tone}\n{urgency}\n{instruction}".encode("utf-8")).hexdigest()[:10]
         speaker_slug = re.sub(r"[^a-z0-9]+", "-", speaker.casefold()).strip("-")
         prefix = f"{index:04d}-{speaker_slug}-{digest}"
         generated = segments_dir / f"{prefix}_000.wav"
@@ -189,6 +219,7 @@ def main() -> None:
                 generate_audio(
                     text=sentence, model=model, max_tokens=1024, voice=None, lang_code="en",
                     ref_audio=reference_audio, ref_text=reference_text,
+                    instruct=instruction,
                     output_path=str(segments_dir), file_prefix=prefix, audio_format="wav",
                     temperature=0.65, verbose=False,
                 )
@@ -201,7 +232,7 @@ def main() -> None:
         if index == 1:
             pause_seconds = 0.95
         assembled.append(np.zeros(round(sample_rate * pause_seconds), dtype=np.int16))
-        manifest_units.append({"index": index, "speaker": speaker, "text": sentence, "tone": tone, "urgency": urgency, "asset": generated.name, "reused": reused, "ends_paragraph": ends_paragraph, "reference_audio": reference_audio})
+        manifest_units.append({"index": index, "speaker": speaker, "text": sentence, "tone": tone, "urgency": urgency, "performance_instruction": instruction, "asset": generated.name, "reused": reused, "ends_paragraph": ends_paragraph, "reference_audio": reference_audio})
     write_wav(output, np.concatenate(assembled), sample_rate)
     manifest = {
         "plan": str(plan_path), "source": plan.get("source_snapshot"), "output": str(output), "model": MODEL_ID,
