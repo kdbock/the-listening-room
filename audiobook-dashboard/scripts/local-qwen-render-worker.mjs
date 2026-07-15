@@ -614,6 +614,90 @@ function renderFinalMix({ ffmpeg, narrationPath, effectsPath, ambiencePath, outp
   return runCommand(ffmpeg, args).then(() => true);
 }
 
+async function exportLogicStem({ ffmpeg, sourcePath, outputPath, durationSeconds = 0 }) {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+  if (sourcePath && fs.existsSync(sourcePath)) {
+    await runCommand(ffmpeg, [
+      "-y",
+      "-hide_banner",
+      "-loglevel", "warning",
+      "-i", sourcePath,
+      "-ac", "2",
+      "-ar", "48000",
+      outputPath,
+    ]);
+    return true;
+  }
+  const duration = Math.max(1, Number(durationSeconds || 0));
+  await runCommand(ffmpeg, [
+    "-y",
+    "-hide_banner",
+    "-loglevel", "warning",
+    "-f", "lavfi",
+    "-i", `anullsrc=channel_layout=stereo:sample_rate=48000`,
+    "-t", String(duration),
+    outputPath,
+  ]);
+  return false;
+}
+
+function csvEscape(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+function formatTimecode(seconds) {
+  const total = Math.max(0, Number(seconds || 0));
+  const minutes = Math.floor(total / 60);
+  const wholeSeconds = Math.floor(total % 60);
+  const millis = Math.round((total - Math.floor(total)) * 1000);
+  return `${String(minutes).padStart(2, "0")}:${String(wholeSeconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
+}
+
+async function createLogicExport({ ffmpeg, scene, paths, soundPlan }) {
+  const exportDir = path.join(paths.outputRoot, "logic-export");
+  const narrationDuration = await audioDurationSeconds(ffmpeg, paths.outputPath).catch(() => 0);
+  const stems = [
+    { key: "narration", label: "01-dialogue-narration.wav", source: paths.outputPath },
+    { key: "sound_effects", label: "02-sound-effects.wav", source: paths.effectsStemPath },
+    { key: "ambience", label: "03-ambience.wav", source: paths.ambienceStemPath },
+    { key: "final_reference_mix", label: "04-final-reference-mix.wav", source: paths.finalMixPath },
+  ];
+  const exported = {};
+  for (const stem of stems) {
+    const outputPath = path.join(exportDir, stem.label);
+    const hadSource = await exportLogicStem({ ffmpeg, sourcePath: stem.source, outputPath, durationSeconds: narrationDuration });
+    exported[stem.key] = { path: outputPath, source: stem.source, had_source: hadSource };
+  }
+
+  const markerRows = [["time", "type", "name", "notes", "asset"]];
+  for (const entry of [...(soundPlan.effects || []), ...(soundPlan.ambience || [])]) {
+    markerRows.push([
+      formatTimecode(entry.start_seconds),
+      entry.kind || "effect",
+      entry.cue?.label || entry.description || "Sound cue",
+      entry.reason || entry.cue?.reason || "",
+      entry.asset?.name || entry.asset?.relativePath || "",
+    ]);
+  }
+  const markersPath = path.join(exportDir, "markers.csv");
+  writeText(markersPath, `${markerRows.map((row) => row.map(csvEscape).join(",")).join("\n")}\n`);
+
+  const manifestPath = path.join(exportDir, "manifest.json");
+  const manifest = {
+    created_at: nowIso(),
+    format: "logic-pro-stem-package-v1",
+    scene: { id: scene.id, title: scene.title || "", scene_order: scene.scene_order || 0 },
+    sample_rate: 48000,
+    channel_layout: "stereo",
+    import_note: "Import all WAV stems into Logic Pro at 0:00. Keep the final reference mix muted or solo it only for comparison.",
+    stems: exported,
+    markers_csv: markersPath,
+  };
+  writeJson(manifestPath, manifest);
+  return { exportDir, manifestPath, markersPath, stems: exported };
+}
+
 async function audioDurationSeconds(ffmpeg, filePath) {
   const output = await runCommand(ffmpeg, [
     "-hide_banner",
@@ -806,6 +890,7 @@ async function buildSoundDesignPlan({ scene, paths, python }) {
     status: "local_sound_designer_plan",
     note: "Generated locally from approved scene cues. Review asset choices and timing before treating this as a final production mix.",
     scene_summary: designer.scene_summary || summarizeScene(scene.text),
+    scene: { id: scene.id, title: scene.title || "", scene_order: scene.scene_order || 0 },
     tone: designer.tone || inferTone(scene.text),
     sound_strategy: designer.sound_strategy || "Keep narration foreground; use sparse supportive sound.",
     planner: designer.planner || "unknown-local-planner",
@@ -839,6 +924,10 @@ async function renderSoundDesign(paths, soundPlan) {
   if (ambienceItems.length) await renderOverlayStem({ ffmpeg, items: ambienceItems, outputPath: paths.ambienceStemPath, gain: dbToLinear(-26), loopToSeconds: narrationDuration });
   await renderNarrationPlusStem({ ffmpeg, narrationPath: paths.outputPath, stemPath: paths.effectsStemPath, outputPath: paths.withSfxPath });
   await renderFinalMix({ ffmpeg, narrationPath: paths.outputPath, effectsPath: paths.effectsStemPath, ambiencePath: paths.ambienceStemPath, outputPath: paths.finalMixPath });
+  const logicExport = await createLogicExport({ ffmpeg, scene: soundPlan.scene || {}, paths, soundPlan });
+  paths.logicExportDir = logicExport.exportDir;
+  paths.logicExportManifestPath = logicExport.manifestPath;
+  paths.logicMarkersPath = logicExport.markersPath;
 }
 
 function compactSoundPlan(soundPlan, paths) {
@@ -869,6 +958,9 @@ function compactSoundPlan(soundPlan, paths) {
     with_sfx_mix: paths.withSfxPath,
     effects_stem: paths.effectsStemPath,
     ambience_stem: paths.ambienceStemPath,
+    logic_export_dir: paths.logicExportDir || "",
+    logic_export_manifest: paths.logicExportManifestPath || "",
+    logic_markers_csv: paths.logicMarkersPath || "",
     items,
     unmatched: Array.isArray(soundPlan.unmatched) ? soundPlan.unmatched : [],
   };
@@ -890,6 +982,9 @@ async function completeJob(job, paths, soundPlan) {
       sound_design_plan: soundPlanSummary,
       with_sfx_output_path: paths.withSfxPath,
       final_mix_output_path: paths.finalMixPath,
+      logic_export_dir: paths.logicExportDir || "",
+      logic_export_manifest: paths.logicExportManifestPath || "",
+      logic_markers_csv: paths.logicMarkersPath || "",
       error_message: "",
     }),
     updateDoc(doc(db, "scenes", job.scene_id), {
@@ -898,6 +993,9 @@ async function completeJob(job, paths, soundPlan) {
       render_output_path: localOutputPath,
       render_sound_design_plan_path: paths.soundPlanPath,
       render_sound_design_plan: soundPlanSummary,
+      render_logic_export_dir: paths.logicExportDir || "",
+      render_logic_export_manifest: paths.logicExportManifestPath || "",
+      render_logic_markers_csv: paths.logicMarkersPath || "",
       render_error_message: "",
       updated_at: timestamp,
     }),

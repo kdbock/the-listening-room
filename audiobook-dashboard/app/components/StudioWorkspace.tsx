@@ -2217,6 +2217,9 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                           {activeScene.render_output_path && <small>Output: {activeScene.render_output_path}</small>}
                           {activeScene.render_sound_design_plan_path && <small>Sound design plan: {activeScene.render_sound_design_plan_path}</small>}
                           {renderJob?.local_output_path && <small>Local file: {renderJob.local_output_path}</small>}
+                          {(activeScene.render_logic_export_dir || renderJob?.logic_export_dir) && <small>Logic export: {activeScene.render_logic_export_dir || renderJob?.logic_export_dir}</small>}
+                          {(activeScene.render_logic_export_manifest || renderJob?.logic_export_manifest) && <small>Logic manifest: {activeScene.render_logic_export_manifest || renderJob?.logic_export_manifest}</small>}
+                          {(activeScene.render_logic_markers_csv || renderJob?.logic_markers_csv) && <small>Logic markers: {activeScene.render_logic_markers_csv || renderJob?.logic_markers_csv}</small>}
                           {soundDesignItems.some((item) => item.asset_path) && (
                             <small>Matched assets are stored in the sound design plan.</small>
                           )}

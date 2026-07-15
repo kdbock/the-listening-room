@@ -105,6 +105,9 @@ export type SceneRecord = {
   render_output_path?: string;
   render_sound_design_plan_path?: string;
   render_sound_design_plan?: SoundDesignPlanSummary;
+  render_logic_export_dir?: string;
+  render_logic_export_manifest?: string;
+  render_logic_markers_csv?: string;
   render_error_message?: string;
   approvals?: {
     script?: boolean;

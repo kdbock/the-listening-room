@@ -25,6 +25,9 @@ export type RenderJobRecord = {
   render_target: RenderTarget;
   output_path: string;
   local_output_path: string;
+  logic_export_dir?: string;
+  logic_export_manifest?: string;
+  logic_markers_csv?: string;
   sound_design_plan?: SoundDesignPlanSummary;
   error_message: string;
   requested_at: string;
@@ -55,6 +58,9 @@ function normalizeRenderJob(id: string, data: DocumentData): RenderJobRecord {
     render_target: normalizeRenderTarget(data),
     output_path: String(data.output_path ?? ""),
     local_output_path: String(data.local_output_path ?? ""),
+    logic_export_dir: String(data.logic_export_dir ?? ""),
+    logic_export_manifest: String(data.logic_export_manifest ?? ""),
+    logic_markers_csv: String(data.logic_markers_csv ?? ""),
     sound_design_plan: data.sound_design_plan as SoundDesignPlanSummary | undefined,
     error_message: String(data.error_message ?? ""),
     requested_at: String(data.requested_at ?? ""),
