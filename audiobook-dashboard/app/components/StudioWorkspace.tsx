@@ -7,7 +7,7 @@ import { getClientStorage } from "@/lib/firebase/client";
 import { listAllMaterials, listMaterials, readMaterialText, type MaterialRecord } from "@/lib/firebase/materials";
 import { deleteRenderJob, getLatestRenderJob, queueRenderJob, type RenderJobRecord } from "@/lib/firebase/renderJobs";
 import { buildScenesFromManuscript, recommendAmbienceCues, recommendSfxCues, recommendSpeakersForEpisode } from "@/lib/studio/workflow";
-import { deleteScene, listScenes, replaceScenes, saveScene, type SceneRecord, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
+import { deleteScene, listScenes, replaceScenes, saveScene, type SceneRecord, type StudioCue, type StudioDialogueAssignment, type StudioSpeaker } from "@/lib/firebase/scenes";
 import { listVoicePatterns, saveVoicePattern, type VoicePattern } from "@/lib/firebase/voicePatterns";
 import { getDownloadURL, ref } from "firebase/storage";
 
@@ -128,6 +128,26 @@ function soundCueTokens(value: string) {
     .filter((token) => !["the", "and", "for", "with", "from", "that", "this", "sound", "effect", "cue"].includes(token));
 }
 
+function parseTimestamp(value?: string) {
+  if (!value) return 0;
+  const parts = value.split(":").map((part) => Number(part.trim()));
+  if (parts.some((part) => !Number.isFinite(part))) return 0;
+  if (parts.length === 1) return Math.max(0, Math.round(parts[0]));
+  const seconds = parts.pop() ?? 0;
+  const minutes = parts.pop() ?? 0;
+  const hours = parts.pop() ?? 0;
+  return Math.max(0, Math.round(hours * 3600 + minutes * 60 + seconds));
+}
+
+function formatTimestamp(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  const seconds = safeSeconds % 60;
+  if (hours) return `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function scoreSoundMatch(item: SoundArchiveItem, tokens: string[]) {
   const haystack = [
     item.name,
@@ -193,6 +213,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
   const [referenceAuditionUrls, setReferenceAuditionUrls] = useState<Record<string, string>>({});
   const [soundArchiveItems, setSoundArchiveItems] = useState<SoundArchiveItem[]>([]);
+  const [sfxSearchDrafts, setSfxSearchDrafts] = useState<Record<string, string>>({});
+  const [sfxTimelineDrafts, setSfxTimelineDrafts] = useState<Record<string, number>>({});
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedCharacterType, setSelectedCharacterType] = useState("");
   const [selectedDialogueTone, setSelectedDialogueTone] = useState("");
@@ -202,6 +224,25 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const attemptedAutoImport = useRef(false);
 
   const characterTypes = voicePatterns.length ? voicePatterns : starterCharacterTypes;
+
+  function timelineDurationSeconds(scene: SceneRecord) {
+    const cueSeconds = [...scene.sfx_cues, ...scene.ambience_cues].map((cue) => parseTimestamp(cue.time));
+    const textSeconds = Math.round(scene.text.trim().split(/\s+/).filter(Boolean).length / 2.5);
+    return Math.max(60, Math.ceil(scene.estimated_minutes * 60), textSeconds, ...cueSeconds.map((seconds) => seconds + 15));
+  }
+
+  function cueDefaultSecond(scene: SceneRecord, cue: StudioCue) {
+    const timed = parseTimestamp(cue.time);
+    if (timed) return timed;
+    if (typeof cue.start === "number" && scene.text.length) {
+      return Math.round((cue.start / scene.text.length) * timelineDurationSeconds(scene));
+    }
+    return 0;
+  }
+
+  function cueTimelineSecond(scene: SceneRecord, cue: StudioCue) {
+    return sfxTimelineDrafts[cue.id] ?? cueDefaultSecond(scene, cue);
+  }
 
   function matchCueToArchive(cue: { label: string; reason?: string; anchor_text?: string; search_terms?: string[] }): MatchedSound | null {
     if (!soundArchiveItems.length) return null;
@@ -214,6 +255,22 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       .filter((item) => item.score >= 8)
       .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name));
     return ranked[0] ?? null;
+  }
+
+  function rankedSoundMatches(cue: StudioCue, query: string, limit = 5): MatchedSound[] {
+    if (!soundArchiveItems.length) return [];
+    const queryTokens = soundCueTokens(query);
+    const tokens = Array.from(new Set([
+      ...soundCueTokens(`${cue.label} ${cue.reason || ""} ${cue.anchor_text || ""}`),
+      ...(cue.search_terms ?? []).flatMap((term) => soundCueTokens(term)),
+      ...queryTokens,
+    ]));
+    const minimumScore = queryTokens.length ? 2 : 8;
+    return soundArchiveItems
+      .map((item) => ({ ...item, score: scoreSoundMatch(item, tokens) }))
+      .filter((item) => item.score >= minimumScore)
+      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
+      .slice(0, limit);
   }
 
   function cueWithAssetMatch(cue: SceneRecord["sfx_cues"][number]) {
@@ -1224,6 +1281,33 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     });
   }
 
+  async function updateCue(kind: "sfx_cues" | "ambience_cues", cueId: string, updates: Partial<StudioCue>) {
+    if (!activeScene) return;
+    await updateScene({
+      ...activeScene,
+      [kind]: activeScene[kind].map((cue) => cue.id === cueId ? { ...cue, ...updates } : cue),
+      approvals: {
+        ...activeScene.approvals,
+        ...(kind === "sfx_cues" ? { sfx: false } : { music: false }),
+      },
+      final_mix_status: kind === "sfx_cues" ? "voices_approved" : "sfx_approved",
+    } as SceneRecord);
+  }
+
+  async function commitSfxTime(cue: StudioCue, seconds: number) {
+    setSfxTimelineDrafts((current) => ({ ...current, [cue.id]: seconds }));
+    await updateCue("sfx_cues", cue.id, { time: formatTimestamp(seconds) });
+  }
+
+  async function chooseSfxAsset(cue: StudioCue, asset: SoundArchiveItem) {
+    await updateCue("sfx_cues", cue.id, {
+      suggested_asset_name: asset.name,
+      suggested_asset_path: asset.relativePath,
+      source: `${asset.source || "Sound library"} · ${asset.pack || asset.kind || "selected asset"}`,
+    });
+    setSceneStatus(`Selected ${asset.name} for ${cue.label}.`);
+  }
+
   async function markReadyToRender() {
     if (!activeScene) return;
     const previewRows = renderPreviewRows(activeScene);
@@ -2039,6 +2123,10 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         <div className="sound-layer-list">
                           {activeScene.sfx_cues.map((rawCue) => {
                             const cue = cueWithAssetMatch(rawCue);
+                            const durationSeconds = timelineDurationSeconds(activeScene);
+                            const timelineSecond = Math.min(durationSeconds, cueTimelineSecond(activeScene, cue));
+                            const searchDraft = sfxSearchDrafts[cue.id] ?? "";
+                            const candidates = rankedSoundMatches(cue, searchDraft);
                             return (
                               <div className={`sound-layer ${cue.suggested_asset_path ? "" : "unmatched"}`} key={cue.id}>
                                 <div className="sound-layer-track">
@@ -2046,20 +2134,50 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                     <input type="checkbox" checked={cue.approved} onChange={() => toggleCue("sfx_cues", cue.id)} />
                                     <span>{cue.approved ? "Approved" : "Approve"}</span>
                                   </label>
-                                  <strong>{cue.time || "0:00"}</strong>
+                                  <strong>{formatTimestamp(timelineSecond)}</strong>
+                                  <input
+                                    aria-label={`Place ${cue.label} on the timeline`}
+                                    type="range"
+                                    min={0}
+                                    max={durationSeconds}
+                                    value={timelineSecond}
+                                    onChange={(event) => setSfxTimelineDrafts((current) => ({ ...current, [cue.id]: Number(event.target.value) }))}
+                                    onMouseUp={(event) => commitSfxTime(cue, Number(event.currentTarget.value))}
+                                    onTouchEnd={(event) => commitSfxTime(cue, Number(event.currentTarget.value))}
+                                    onBlur={(event) => commitSfxTime(cue, Number(event.currentTarget.value))}
+                                  />
+                                  <small>Scene timeline · {formatTimestamp(durationSeconds)}</small>
                                 </div>
                                 <div className="sound-layer-main">
                                   <strong>{cue.label}</strong>
                                   <small>{cue.reason}</small>
                                   {cue.anchor_text && <small>Text: “{cue.anchor_text}”</small>}
                                   {cue.search_terms?.length ? <small>Search: {cue.search_terms.join(", ")}</small> : null}
+                                  <input
+                                    value={searchDraft}
+                                    onChange={(event) => setSfxSearchDrafts((current) => ({ ...current, [cue.id]: event.target.value }))}
+                                    placeholder="Search the sound library for this cue"
+                                  />
                                 </div>
                                 <div className="sound-layer-audition">
-                                  <small>{cue.suggested_asset_name || "No strong library match yet"}</small>
-                                  {cue.suggested_asset_path && <small>{cue.suggested_asset_path}</small>}
+                                  <strong>{cue.suggested_asset_name || "No sound selected yet"}</strong>
+                                  {cue.suggested_asset_path && <small>Selected: {cue.suggested_asset_path}</small>}
                                   {cue.suggested_asset_path && (
                                     <audio controls preload="none" src={soundLibraryPreviewUrl(cue.suggested_asset_path)} />
                                   )}
+                                  <div className="sound-candidate-list">
+                                    {candidates.length ? candidates.map((candidate) => (
+                                      <div className="sound-candidate" key={`${cue.id}-${candidate.relativePath}`}>
+                                        <div>
+                                          <strong>{candidate.name}</strong>
+                                          <small>{candidate.source || "Sound library"} · {candidate.pack || candidate.kind || "asset"} · score {candidate.score}</small>
+                                          <small>{candidate.relativePath}</small>
+                                        </div>
+                                        <audio controls preload="none" src={soundLibraryPreviewUrl(candidate.relativePath)} />
+                                        <button className="button" onClick={() => chooseSfxAsset(cue, candidate)}>Use this sound</button>
+                                      </div>
+                                    )) : <small>No library matches yet. Try a simpler search term like “door”, “footsteps”, “truck”, or “wind”.</small>}
+                                  </div>
                                 </div>
                               </div>
                             );
