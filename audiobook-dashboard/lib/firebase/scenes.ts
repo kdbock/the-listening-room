@@ -17,6 +17,8 @@ export type StudioSpeaker = {
   character_type?: string;
   recommended_voice: string;
   approved_voice: string;
+  reference_audio_path?: string;
+  reference_text?: string;
   gender?: "feminine" | "masculine" | "unknown";
   color?: string;
   status: "recommended" | "approved" | "rejected";

@@ -10,6 +10,7 @@ import { firestoreCollections } from "./collections";
 import { getClientFirestore } from "./client";
 
 export type VoicePatternGender = "feminine" | "masculine" | "neutral";
+export type VoicePatternReferenceStatus = "needed" | "candidate" | "approved";
 
 export type VoicePattern = {
   id: string;
@@ -25,6 +26,7 @@ export type VoicePattern = {
   avoid: string;
   reference_audio_path: string;
   reference_text: string;
+  reference_status: VoicePatternReferenceStatus;
   sort_order: number;
   updated_at: string;
   created_at: string;
@@ -44,6 +46,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Fragile caricature, mystical whispering, melodrama.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/ressa/ressa-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 10,
   },
   {
@@ -59,6 +62,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Maternal caricature, fragile breathiness, melodrama.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/tamsin/tamsin-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 20,
   },
   {
@@ -74,6 +78,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Childlike pitch, panic as default, sing-song questions.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/orra/orra-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 30,
   },
   {
@@ -89,6 +94,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Cartoon teen voice, whining, childish exaggeration.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/orra/orra-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 40,
   },
   {
@@ -104,6 +110,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Constant rasp, broad comedy, breathless speed.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/nix/nix-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 50,
   },
   {
@@ -119,6 +126,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Monster growl, slow stupidity, constant aggression.",
     reference_audio_path: "local-narrator/voice-approved/PG2026/flint/flint-reference.v001.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 60,
   },
   {
@@ -134,6 +142,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Booming announcer, cartoon dad, forced gruffness.",
     reference_audio_path: "",
     reference_text: "",
+    reference_status: "needed",
     sort_order: 70,
   },
   {
@@ -149,6 +158,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Salesman polish, melodrama, excessive breath.",
     reference_audio_path: "",
     reference_text: "",
+    reference_status: "needed",
     sort_order: 80,
   },
   {
@@ -164,6 +174,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Cartoon frat voice, false bravado, monotone mumbling.",
     reference_audio_path: "",
     reference_text: "",
+    reference_status: "needed",
     sort_order: 90,
   },
   {
@@ -179,6 +190,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Cartoon teen, cracking-voice gimmick, childish exaggeration.",
     reference_audio_path: "",
     reference_text: "",
+    reference_status: "needed",
     sort_order: 100,
   },
   {
@@ -194,6 +206,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Character impersonation, melodrama, sing-song cadence.",
     reference_audio_path: "local-narrator/nix-voice-reference.wav",
     reference_text: "",
+    reference_status: "approved",
     sort_order: 110,
   },
   {
@@ -209,6 +222,7 @@ const starterPatterns: Array<Omit<VoicePattern, "id" | "updated_at" | "created_a
     avoid: "Robotic delivery unless explicitly desired.",
     reference_audio_path: "",
     reference_text: "",
+    reference_status: "needed",
     sort_order: 120,
   },
 ];
@@ -256,6 +270,7 @@ function normalizeVoicePattern(id: string, data: Partial<VoicePattern>): VoicePa
     avoid: data.avoid ?? "",
     reference_audio_path: data.reference_audio_path ?? "",
     reference_text: data.reference_text ?? "",
+    reference_status: data.reference_status ?? (data.reference_audio_path ? "approved" : "needed"),
     sort_order: Number(data.sort_order ?? 999),
     updated_at: data.updated_at ?? timestamp,
     created_at: data.created_at ?? timestamp,

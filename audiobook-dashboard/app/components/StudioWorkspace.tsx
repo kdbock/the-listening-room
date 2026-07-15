@@ -40,6 +40,9 @@ const starterCharacterTypes: Array<{
   detail: string;
   gender: "feminine" | "masculine" | "neutral";
   voice: string;
+  reference_audio_path?: string;
+  reference_text?: string;
+  reference_status?: VoicePattern["reference_status"];
 }> = [
   { value: "older_woman", label: "Older woman", detail: "Mature, lower, controlled", gender: "feminine", voice: "ressa_voice" },
   { value: "middle_aged_woman", label: "Middle-aged woman", detail: "Warm, grounded, practical", gender: "feminine", voice: "tamsin_voice" },
@@ -62,6 +65,7 @@ function voiceTypeLabel(value: string) {
   if (value === "female_voice_2") return "Middle-aged woman";
   if (value === "female_voice_3") return "Older woman";
   if (value === "male_voice_1") return "Deep woman";
+  if (value.startsWith("profile:")) return "Approved profile reference";
   return speakerVoiceTypes.find((option) => option.value === value)?.label || value || "No voice selected";
 }
 
@@ -74,10 +78,28 @@ function canonicalVoiceValue(value: string) {
 }
 
 function voiceCompatibleWithGender(voiceValue: string, gender: StudioSpeaker["gender"]) {
-  const voice = speakerVoiceTypes.find((option) => option.value === canonicalVoiceValue(voiceValue));
-  if (!voiceValue || !voice) return true;
+  const normalizedVoice = voiceValue || "";
+  if (normalizedVoice.startsWith("profile:")) return true;
+  const voice = speakerVoiceTypes.find((option) => option.value === canonicalVoiceValue(normalizedVoice));
+  if (!normalizedVoice || !voice) return true;
   if (gender === "masculine") return voice.gender === "masculine" || voice.gender === "neutral";
   return true;
+}
+
+function profileVoiceValue(patternValue: string) {
+  return patternValue ? `profile:${patternValue}` : "";
+}
+
+function patternHasApprovedReference(pattern?: { reference_audio_path?: string; reference_status?: VoicePattern["reference_status"] }) {
+  return Boolean(pattern?.reference_audio_path?.trim() && pattern.reference_status === "approved");
+}
+
+function speakerHasApprovedReference(speaker: StudioSpeaker) {
+  return Boolean(speaker.reference_audio_path?.trim() && speaker.approved_voice?.startsWith("profile:"));
+}
+
+function speakerNeedsMasculineReference(speaker: StudioSpeaker) {
+  return speaker.gender === "masculine" && !speakerHasApprovedReference(speaker) && !speaker.approved_voice;
 }
 
 function speakerColor(speaker: StudioSpeaker, index: number) {
@@ -125,6 +147,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
   const [manuscriptSourceHint, setManuscriptSourceHint] = useState("");
   const [manualSpeakerName, setManualSpeakerName] = useState("");
   const [voicePatterns, setVoicePatterns] = useState<VoicePattern[]>([]);
+  const [referenceAuditionUrls, setReferenceAuditionUrls] = useState<Record<string, string>>({});
   const [selectedSpeakerName, setSelectedSpeakerName] = useState("");
   const [selectedCharacterType, setSelectedCharacterType] = useState("");
   const [selectedDialogueTone, setSelectedDialogueTone] = useState("");
@@ -221,6 +244,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
         return {
           approved_voice: voiceCompatibleWithGender(speaker.approved_voice, gender) ? canonicalVoiceValue(speaker.approved_voice) : "",
+          reference_audio_path: speaker.reference_audio_path || "",
+          reference_text: speaker.reference_text || "",
           character_type: speaker.character_type,
           gender,
           color: speaker.color,
@@ -236,6 +261,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       const speaker = scene.speakers.find((entry) => entry.character_type === typeValue && entry.approved_voice);
       if (speaker) return {
         approved_voice: canonicalVoiceValue(speaker.approved_voice),
+        reference_audio_path: speaker.reference_audio_path || "",
+        reference_text: speaker.reference_text || "",
         gender: speaker.gender || inferSpeakerGender(scene, speaker.name),
       };
     }
@@ -722,9 +749,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       setSceneStatus(`Assign ${unassigned} unassigned highlighted quote${unassigned === 1 ? "" : "s"} before approving voices.`);
       return;
     }
-    const missing = activeScene.speakers.filter((speaker) => speaker.name !== "Unassigned" && !speaker.approved_voice);
+    const missing = activeScene.speakers.filter((speaker) => {
+      if (speaker.name === "Unassigned") return false;
+      if (speaker.approved_voice?.startsWith("profile:")) return !speaker.reference_audio_path;
+      return !speaker.approved_voice && !speaker.reference_audio_path;
+    });
     if (missing.length) {
-      setSceneStatus(`Choose a voice type for ${missing.map((speaker) => speaker.name).join(", ")} before approving.`);
+      setSceneStatus(`Choose a voice type or approved profile reference for ${missing.map((speaker) => speaker.name).join(", ")} before approving.`);
       return;
     }
     const incompatible = activeScene.speakers.filter((speaker) => speaker.name !== "Unassigned" && !voiceCompatibleWithGender(speaker.approved_voice, speaker.gender || inferSpeakerGender(activeScene, speaker.name)));
@@ -755,6 +786,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
             ...speaker,
             approved_voice: approvedVoice,
             recommended_voice: "",
+            reference_audio_path: "",
+            reference_text: "",
             gender: speaker.gender || inferSpeakerGender(scene, speaker.name),
             status: "recommended" as const,
           };
@@ -782,13 +815,16 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         speakers: scene.speakers.map((speaker) => {
           if (speaker.name.toLowerCase() !== lowerName) return speaker;
           const gender = speaker.gender || inferSpeakerGender(scene, speaker.name);
-          const typeVoice = type?.voice || remembered?.approved_voice || "";
+          const approvedProfileReference = patternHasApprovedReference(type);
+          const typeVoice = approvedProfileReference ? profileVoiceValue(typeValue) : type?.voice || remembered?.approved_voice || "";
           const approvedVoice = voiceCompatibleWithGender(typeVoice, gender) ? canonicalVoiceValue(typeVoice) : "";
           return {
             ...speaker,
             character_type: typeValue || "",
             approved_voice: approvedVoice,
             recommended_voice: "",
+            reference_audio_path: approvedProfileReference ? type?.reference_audio_path || "" : remembered?.reference_audio_path || "",
+            reference_text: approvedProfileReference ? type?.reference_text || "" : remembered?.reference_text || "",
             gender,
             status: "recommended" as const,
           };
@@ -816,6 +852,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
         character_type: characterType,
         gender: existing?.gender || speaker.gender || inferSpeakerGender(activeScene, speaker.name),
         approved_voice: canonicalVoiceValue(existing?.approved_voice || speakerMemory?.approved_voice || typeMemory?.approved_voice || ""),
+        reference_audio_path: existing?.reference_audio_path || speakerMemory?.reference_audio_path || typeMemory?.reference_audio_path || "",
+        reference_text: existing?.reference_text || speakerMemory?.reference_text || typeMemory?.reference_text || "",
         color: existing?.color || speaker.color || speakerColors[index % speakerColors.length],
       };
     });
@@ -853,6 +891,8 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
       character_type: "",
       recommended_voice: "",
       approved_voice: bookSpeakerMemory(name)?.approved_voice || "",
+      reference_audio_path: bookSpeakerMemory(name)?.reference_audio_path || "",
+      reference_text: bookSpeakerMemory(name)?.reference_text || "",
       gender: inferSpeakerGender(activeScene, name),
       color: speakerColors[activeScene.speakers.length % speakerColors.length],
       status: "recommended",
@@ -1363,7 +1403,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       </div>
                       {voicePatterns.map((pattern) => (
                         <details className="studio-details" key={pattern.value}>
-                          <summary>{pattern.label} · {pattern.gender} · {pattern.accent || "No accent set"}</summary>
+                          <summary>{pattern.label} · {pattern.gender} · {pattern.reference_status === "approved" ? "reference approved" : pattern.reference_status === "candidate" ? "candidate reference" : "needs reference"}</summary>
                           <div className="dialogue-line-row">
                             <label>
                               Pattern name
@@ -1442,8 +1482,39 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               <input
                                 value={pattern.reference_audio_path}
                                 onChange={(event) => updateVoicePatternDraft(pattern.value, { reference_audio_path: event.target.value })}
-                                placeholder="local-narrator/voice-approved/..."
+                                placeholder="/Users/kristykelly/.../voice.wav or local-narrator/voice-approved/..."
                               />
+                            </label>
+                            <label>
+                              Audition WAV
+                              <input
+                                accept="audio/wav,audio/x-wav,audio/*"
+                                type="file"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  if (!file) return;
+                                  const previousUrl = referenceAuditionUrls[pattern.value];
+                                  if (previousUrl) URL.revokeObjectURL(previousUrl);
+                                  const auditionUrl = URL.createObjectURL(file);
+                                  setReferenceAuditionUrls((current) => ({ ...current, [pattern.value]: auditionUrl }));
+                                  updateVoicePatternDraft(pattern.value, { reference_status: "candidate" });
+                                }}
+                              />
+                              <small>Use this to listen before approving. Because browsers cannot expose the Mac file path, also paste the renderable path above.</small>
+                            </label>
+                            {referenceAuditionUrls[pattern.value] && (
+                              <audio controls src={referenceAuditionUrls[pattern.value]} />
+                            )}
+                            <label>
+                              Reference status
+                              <select
+                                value={pattern.reference_status}
+                                onChange={(event) => updateVoicePatternDraft(pattern.value, { reference_status: event.target.value as VoicePattern["reference_status"] })}
+                              >
+                                <option value="needed">Needs reference</option>
+                                <option value="candidate">Candidate — auditioning</option>
+                                <option value="approved">Approved for casting</option>
+                              </select>
                             </label>
                             <label>
                               Reference text
@@ -1455,6 +1526,13 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                             </label>
                           </div>
                           <div className="actions">
+                            <button
+                              className="button"
+                              disabled={!pattern.reference_audio_path.trim()}
+                              onClick={() => persistVoicePattern({ ...pattern, reference_status: "approved", voice: pattern.voice || "" })}
+                            >
+                              Approve reference WAV
+                            </button>
                             <button className="button primary" onClick={() => persistVoicePattern(pattern)}>Save voice pattern</button>
                           </div>
                         </details>
@@ -1607,8 +1685,11 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                   </option>
                                 ))}
                               </select>
-                              {speaker.gender === "masculine" && (
-                                <small className="studio-warning">Needs masculine reference WAV</small>
+                              {speakerNeedsMasculineReference(speaker) && (
+                                <small className="studio-warning">Needs approved masculine reference WAV</small>
+                              )}
+                              {speakerHasApprovedReference(speaker) && (
+                                <small className="muted">Using approved profile WAV</small>
                               )}
                               <details onClick={(event) => event.stopPropagation()}>
                                 <summary>Voice override</summary>

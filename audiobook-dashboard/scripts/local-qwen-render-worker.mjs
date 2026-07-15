@@ -211,6 +211,20 @@ function existingFile(...parts) {
   return fs.existsSync(filePath) ? filePath : "";
 }
 
+function resolveReferenceAudioPath(value) {
+  const raw = String(value || "").trim().replace(/^["']|["']$/g, "");
+  if (!raw) return "";
+  const expanded = raw.startsWith("~/") ? path.join(process.env.HOME || "", raw.slice(2)) : raw;
+  const candidates = path.isAbsolute(expanded)
+    ? [expanded]
+    : [
+        path.join(projectDir, expanded),
+        path.join(localNarratorDir, expanded),
+        path.join(dashboardDir, expanded),
+      ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) || "";
+}
+
 function voiceReferenceBank() {
   return {
     narrator: {
@@ -264,6 +278,13 @@ function voiceReferenceBank() {
 function pickSpeakerReference(speaker, bank) {
   const voice = String(speaker.approved_voice || speaker.recommended_voice || "").toLowerCase();
   const name = String(speaker.name || "Speaker");
+  const approvedProfileReference = resolveReferenceAudioPath(speaker.reference_audio_path);
+  if (approvedProfileReference) {
+    return {
+      audio: approvedProfileReference,
+      text: String(speaker.reference_text || "").trim() || calibrationText,
+    };
+  }
   if (voice === "narrator_voice") return bank.narrator;
   if (bank.byType?.[voice]) return { audio: bank.byType[voice], text: calibrationText };
   if (voice.includes("man") && !voice.includes("woman") && bank.men.length) {
