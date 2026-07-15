@@ -64,6 +64,10 @@ function slug(value) {
   return String(value || "untitled").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "untitled";
 }
 
+function safeFilename(value) {
+  return String(value || "untitled").replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "").slice(0, 120) || "untitled";
+}
+
 function cueTokens(value) {
   const synonyms = {
     door: ["door", "knock", "hinge", "handle"],
@@ -658,6 +662,51 @@ function formatTimecode(seconds) {
   return `${String(minutes).padStart(2, "0")}:${String(wholeSeconds).padStart(2, "0")}.${String(millis).padStart(3, "0")}`;
 }
 
+function soundCueTimestamp(entry, index) {
+  const seconds = Number(entry.start_seconds ?? parseCueTime(entry.cue?.time, index));
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const remainingSeconds = total % 60;
+  if (hours) return `${String(hours).padStart(2, "0")}-${String(minutes).padStart(2, "0")}-${String(remainingSeconds).padStart(2, "0")}`;
+  return `${String(minutes).padStart(2, "0")}-${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function copyUsedSoundFiles(soundPlan, paths) {
+  const entries = [...(soundPlan.effects || []), ...(soundPlan.ambience || [])].filter((entry) => entry.asset?.absolutePath && fs.existsSync(entry.asset.absolutePath));
+  const copied = [];
+  if (!entries.length) return copied;
+  fs.mkdirSync(paths.usedSoundsDir, { recursive: true });
+
+  entries.forEach((entry, index) => {
+    const sourcePath = entry.asset.absolutePath;
+    const extension = path.extname(sourcePath) || ".wav";
+    const timestamp = soundCueTimestamp(entry, index);
+    const kind = safeFilename(entry.kind || "effect");
+    const label = safeFilename(entry.cue?.label || entry.description || entry.asset.name || `sound-${index + 1}`);
+    const assetName = safeFilename(path.basename(sourcePath, extension));
+    const outputName = `${String(index + 1).padStart(2, "0")}_${timestamp}_${kind}_${label}__${assetName}${extension}`;
+    const outputPath = path.join(paths.usedSoundsDir, outputName);
+    fs.copyFileSync(sourcePath, outputPath);
+    copied.push({
+      kind: entry.kind || "effect",
+      label: entry.cue?.label || entry.description || "",
+      time: entry.cue?.time || formatTimecode(entry.start_seconds || 0),
+      start_seconds: Number(entry.start_seconds || 0),
+      source_path: sourcePath,
+      copied_path: outputPath,
+      asset_name: entry.asset.name || path.basename(sourcePath),
+    });
+  });
+
+  writeJson(path.join(paths.usedSoundsDir, "manifest.json"), {
+    created_at: nowIso(),
+    note: "Original source sound files used by this render. Filenames are prefixed with the approved cue timestamp.",
+    files: copied,
+  });
+  return copied;
+}
+
 async function createLogicExport({ ffmpeg, scene, paths, soundPlan }) {
   const exportDir = path.join(paths.outputRoot, "logic-export");
   const narrationDuration = await audioDurationSeconds(ffmpeg, paths.outputPath).catch(() => 0);
@@ -822,6 +871,7 @@ function buildNarratorPlan({ job, scene, book }) {
   const planPath = path.join(outputRoot, "render-plan.json");
   const outputPath = path.join(outputRoot, "narration-preview.wav");
   const segmentsDir = path.join(outputRoot, "segments");
+  const usedSoundsDir = path.join(segmentsDir, "sound-effects-used");
   const soundPlanPath = path.join(outputRoot, "sound-design-plan.json");
   const effectsStemPath = path.join(outputRoot, "02-effects.wav");
   const ambienceStemPath = path.join(outputRoot, "03-ambience.wav");
@@ -840,7 +890,7 @@ function buildNarratorPlan({ job, scene, book }) {
     units: buildNarrationUnits({ text, speakers: scene.speakers, assignments: scene.dialogue_assignments, bank }),
   });
 
-  return { outputRoot, sourcePath, planPath, outputPath, segmentsDir, soundPlanPath, effectsStemPath, ambienceStemPath, withSfxPath, finalMixPath };
+  return { outputRoot, sourcePath, planPath, outputPath, segmentsDir, usedSoundsDir, soundPlanPath, effectsStemPath, ambienceStemPath, withSfxPath, finalMixPath };
 }
 
 async function buildSoundDesignPlan({ scene, paths, python }) {
@@ -929,6 +979,8 @@ async function renderSoundDesign(paths, soundPlan) {
   if (ambienceItems.length) await renderOverlayStem({ ffmpeg, items: ambienceItems, outputPath: paths.ambienceStemPath, gain: dbToLinear(-26), loopToSeconds: narrationDuration });
   await renderNarrationPlusStem({ ffmpeg, narrationPath: paths.outputPath, stemPath: paths.effectsStemPath, outputPath: paths.withSfxPath });
   await renderFinalMix({ ffmpeg, narrationPath: paths.outputPath, effectsPath: paths.effectsStemPath, ambiencePath: paths.ambienceStemPath, outputPath: paths.finalMixPath });
+  soundPlan.used_sound_files = copyUsedSoundFiles(soundPlan, paths);
+  writeJson(paths.soundPlanPath, soundPlan);
   const logicExport = await createLogicExport({ ffmpeg, scene: soundPlan.scene || {}, paths, soundPlan });
   paths.logicExportDir = logicExport.exportDir;
   paths.logicExportManifestPath = logicExport.manifestPath;
@@ -963,6 +1015,8 @@ function compactSoundPlan(soundPlan, paths) {
     with_sfx_mix: paths.withSfxPath,
     effects_stem: paths.effectsStemPath,
     ambience_stem: paths.ambienceStemPath,
+    used_sounds_dir: paths.usedSoundsDir,
+    used_sound_files: Array.isArray(soundPlan.used_sound_files) ? soundPlan.used_sound_files : [],
     logic_export_dir: paths.logicExportDir || "",
     logic_export_manifest: paths.logicExportManifestPath || "",
     logic_markers_csv: paths.logicMarkersPath || "",
