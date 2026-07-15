@@ -1165,6 +1165,45 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
     setSceneStatus(`Saved voice pattern: ${saved.label}.`);
   }
 
+  async function approveReferenceForSpeakerProfile(speaker: StudioSpeaker) {
+    if (!activeScene || !speaker.character_type) return;
+    const pattern = voicePatterns.find((entry) => entry.value === speaker.character_type);
+    if (!pattern) {
+      setSceneStatus(`No reusable profile found for ${speaker.name}.`);
+      return;
+    }
+    if (!pattern.reference_audio_path.trim()) {
+      setSceneStatus(`Paste a renderable WAV path before approving ${pattern.label}.`);
+      return;
+    }
+    const saved = await saveVoicePattern({ ...pattern, reference_status: "approved" });
+    setVoicePatterns((current) => current.map((entry) => entry.value === saved.value ? saved : entry));
+    const nextScenes = scenes.map((scene) => {
+      const hasProfile = scene.speakers.some((entry) => entry.character_type === saved.value);
+      if (!hasProfile) return scene;
+      return {
+        ...scene,
+        speakers: scene.speakers.map((entry) => {
+          if (entry.character_type !== saved.value) return entry;
+          return {
+            ...entry,
+            approved_voice: profileVoiceValue(saved.value),
+            recommended_voice: "",
+            reference_audio_path: saved.reference_audio_path,
+            reference_text: saved.reference_text,
+            status: "recommended" as const,
+          };
+        }),
+        approvals: { ...scene.approvals, voice: true },
+        final_mix_status: scene.final_mix_status === "voices_approved" ? "draft" as const : scene.final_mix_status,
+      };
+    });
+    setScenes(nextScenes);
+    const changedScenes = nextScenes.filter((scene, index) => scene !== scenes[index] && !scene.id.startsWith("preview-"));
+    await Promise.all(changedScenes.map((scene) => saveScene(scene)));
+    setSceneStatus(`Approved ${saved.label} reference WAV and attached it to matching speakers in this book.`);
+  }
+
   async function refreshSfxSuggestions() {
     if (!activeScene) return;
     const existingChoices = activeScene.sfx_cues.filter((cue) => cue.approved || cue.reason === "Added manually in the studio.");
@@ -1688,6 +1727,61 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                               {speakerNeedsMasculineReference(speaker) && (
                                 <small className="studio-warning">Needs approved masculine reference WAV</small>
                               )}
+                              {speakerNeedsMasculineReference(speaker) && speaker.character_type && (() => {
+                                const pattern = voicePatterns.find((entry) => entry.value === speaker.character_type);
+                                if (!pattern) return null;
+                                return (
+                                  <details className="speaker-reference-editor" onClick={(event) => event.stopPropagation()} open>
+                                    <summary>Add reference to {pattern.label}</summary>
+                                    <label>
+                                      Audition WAV
+                                      <input
+                                        accept="audio/wav,audio/x-wav,audio/*"
+                                        type="file"
+                                        onChange={(event) => {
+                                          const file = event.target.files?.[0];
+                                          if (!file) return;
+                                          const previousUrl = referenceAuditionUrls[pattern.value];
+                                          if (previousUrl) URL.revokeObjectURL(previousUrl);
+                                          const auditionUrl = URL.createObjectURL(file);
+                                          setReferenceAuditionUrls((current) => ({ ...current, [pattern.value]: auditionUrl }));
+                                          updateVoicePatternDraft(pattern.value, { reference_status: "candidate" });
+                                        }}
+                                      />
+                                      <small>Audition here, then paste the real Mac path below for rendering.</small>
+                                    </label>
+                                    {referenceAuditionUrls[pattern.value] && (
+                                      <audio controls src={referenceAuditionUrls[pattern.value]} />
+                                    )}
+                                    <label>
+                                      Renderable WAV path
+                                      <input
+                                        value={pattern.reference_audio_path}
+                                        onChange={(event) => updateVoicePatternDraft(pattern.value, {
+                                          reference_audio_path: event.target.value,
+                                          reference_status: event.target.value.trim() ? "candidate" : "needed",
+                                        })}
+                                        placeholder="/Users/kristykelly/.../middle-aged-man.wav"
+                                      />
+                                    </label>
+                                    <label>
+                                      Reference text
+                                      <textarea
+                                        value={pattern.reference_text}
+                                        onChange={(event) => updateVoicePatternDraft(pattern.value, { reference_text: event.target.value })}
+                                        placeholder="Text spoken in the reference WAV"
+                                      />
+                                    </label>
+                                    <button
+                                      className="button primary"
+                                      disabled={!pattern.reference_audio_path.trim()}
+                                      onClick={() => approveReferenceForSpeakerProfile(speaker)}
+                                    >
+                                      Approve for {pattern.label}
+                                    </button>
+                                  </details>
+                                );
+                              })()}
                               {speakerHasApprovedReference(speaker) && (
                                 <small className="muted">Using approved profile WAV</small>
                               )}

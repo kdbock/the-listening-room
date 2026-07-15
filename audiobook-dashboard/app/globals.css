@@ -68,6 +68,11 @@ body { margin:0; background:var(--paper); color:var(--ink); font-family:var(--fo
 .cast-card details { border-top:1px solid var(--line); padding-top:7px; }
 .cast-card summary,.manual-assignment-list summary,.dialogue-line-editor summary { cursor:pointer; color:var(--forest); font-size:12px; font-weight:800; }
 .cast-card details select { margin-top:8px; width:100%; }
+.speaker-reference-editor { display:grid; gap:9px; background:#fff8ef; border:1px solid #ead8bd; border-radius:10px; padding:9px; }
+.speaker-reference-editor label { display:grid; gap:5px; color:var(--muted); font-size:10px; text-transform:uppercase; letter-spacing:.08em; font-weight:800; }
+.speaker-reference-editor small { text-transform:none; letter-spacing:0; font-weight:600; line-height:1.35; }
+.speaker-reference-editor audio,.speaker-reference-editor input,.speaker-reference-editor textarea { width:100%; }
+.speaker-reference-editor textarea { min-height:58px; line-height:1.45; }
 .side-section-title { margin-top:16px; padding-top:14px; border-top:1px solid var(--line); }
 .unassigned-note { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; padding:4px 2px; }
 .speaker-legend span,.manual-assignment span { display:flex; align-items:center; gap:8px; font-size:12px; }
