@@ -6,13 +6,14 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "dev": "next dev",
+    "dev": "npm run sound:link --silent && next dev",
     "build": "next build",
     "start": "next start",
     "test": "npm run build && node --test tests/rendered-html.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "sound:index": "node scripts/build-sound-archive-index.mjs",
+    "sound:link": "node scripts/link-sound-library.mjs",
     "render:local": "node scripts/local-qwen-render-worker.mjs --watch"
   },
   "dependencies": {
