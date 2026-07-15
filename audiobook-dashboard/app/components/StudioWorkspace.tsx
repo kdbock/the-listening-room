@@ -1573,28 +1573,70 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                         </div>
                       </div>
                       <div className="speaker-side-card">
-                        <strong>Add missed speaker</strong>
+                        <strong>Cast</strong>
+                        <small className="muted">Select a character, set their reusable profile, then assign highlighted dialogue.</small>
+                        <div className="cast-roster">
+                          {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
+                            <div
+                              className={`cast-card ${selectedSpeakerName === speaker.name ? "active" : ""}`}
+                              key={`cast-${speaker.name}`}
+                              onClick={() => chooseSpeakerForAssignment(speaker.name)}
+                            >
+                              <button
+                                type="button"
+                                className="cast-card-main"
+                                onClick={() => chooseSpeakerForAssignment(speaker.name)}
+                              >
+                                <span><i style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</span>
+                                <small>{speaker.line_count} lines · {characterTypeLabel(speaker.character_type)}</small>
+                              </button>
+                              <select
+                                aria-label={`Profile for ${speaker.name}`}
+                                value={speaker.character_type || ""}
+                                onChange={(event) => {
+                                  event.stopPropagation();
+                                  updateSpeakerCharacterTypeForBook(speaker.name, event.target.value);
+                                  if (selectedSpeakerName === speaker.name) setSelectedCharacterType(event.target.value);
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                              >
+                                <option value="">Profile…</option>
+                                {characterTypeOptionsForSpeaker(speaker).map((option) => (
+                                  <option key={`cast-${speaker.name}-${option.value}`} value={option.value}>
+                                    {option.label}
+                                  </option>
+                                ))}
+                              </select>
+                              {speaker.gender === "masculine" && (
+                                <small className="studio-warning">Needs masculine reference WAV</small>
+                              )}
+                              <details onClick={(event) => event.stopPropagation()}>
+                                <summary>Voice override</summary>
+                                <select
+                                  aria-label={`Voice for ${speaker.name}`}
+                                  value={canonicalVoiceValue(speaker.approved_voice)}
+                                  onChange={(event) => updateSpeakerVoiceForBook(speaker.name, event.target.value)}
+                                >
+                                  <option value="">Choose voice…</option>
+                                  {voiceOptionsForSpeaker(speaker).map((option) => (
+                                    <option key={`voice-${speaker.name}-${option.value}`} value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </details>
+                            </div>
+                          )) : <p className="materials-empty">No speakers identified yet.</p>}
+                          <span className="unassigned-note"><i className="missed-swatch" /> Unassigned quote</span>
+                        </div>
+                        <strong className="side-section-title">Add missed speaker</strong>
                         <div className="actions">
                           <input value={manualSpeakerName} onChange={(event) => setManualSpeakerName(event.target.value)} placeholder="Speaker name" />
                           <button className="button" onClick={addManualSpeaker}>Add speaker</button>
                         </div>
-                        <div className="speaker-legend">
-                          {activeScene.speakers.map((speaker, index) => (
-                            <button
-                              type="button"
-                              className={`speaker-chip ${selectedSpeakerName === speaker.name ? "active" : ""}`}
-                              key={`legend-${speaker.name}`}
-                              onClick={() => chooseSpeakerForAssignment(speaker.name)}
-                            >
-                              <i style={{ backgroundColor: speakerColor(speaker, index) }} />
-                              {speaker.name}
-                            </button>
-                          ))}
-                          <span><i className="missed-swatch" /> Unassigned quote</span>
-                        </div>
                         {(activeScene.dialogue_assignments ?? []).length > 0 && (
-                          <div className="manual-assignment-list">
-                            <strong>Manual assignments</strong>
+                          <details className="manual-assignment-list">
+                            <summary>Assignments</summary>
                             {(activeScene.dialogue_assignments ?? []).map((assignment) => (
                               <div key={assignment.id} className="manual-assignment">
                                 <span><i style={{ backgroundColor: assignment.color }} />{assignment.speaker}</span>
@@ -1602,11 +1644,12 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                                 <button className="button ghost" onClick={() => removeDialogueAssignment(assignment.id)}>Remove</button>
                               </div>
                             ))}
-                          </div>
+                          </details>
                         )}
                       </div>
                     </div>
-                    <div className="dialogue-line-editor">
+                    <details className="dialogue-line-editor">
+                      <summary>Advanced dialogue rows</summary>
                       <div className="speaker-text-head">
                         <div>
                           <strong>Dialogue lines to render</strong>
@@ -1681,71 +1724,7 @@ export default function StudioWorkspace({ bookId }: { bookId: string }) {
                       }) : (
                         <p className="materials-empty">No quoted dialogue was found in this episode yet.</p>
                       )}
-                    </div>
-                    <div className="studio-list">
-                      {activeScene.speakers.length ? activeScene.speakers.map((speaker, index) => (
-                        <div className="studio-row speaker-pick-row" key={`${speaker.name}-${index}`} onClick={() => chooseSpeakerForAssignment(speaker.name)}>
-                          <div>
-                            <strong><span className="speaker-dot" style={{ backgroundColor: speakerColor(speaker, index) }} />{speaker.name}</strong>
-                            <small>
-                              {speaker.line_count} lines · {speaker.gender || "unknown"} · {characterTypeLabel(speaker.character_type)} · {voiceTypeLabel(canonicalVoiceValue(speaker.approved_voice))} · click card to select
-                              {speaker.gender === "masculine" ? " · no masculine local voice installed yet" : ""}
-                            </small>
-                          </div>
-                          <div className="studio-list">
-                            <select
-                              aria-label={`Character type for ${speaker.name}`}
-                              value={speaker.character_type || ""}
-                              onChange={(event) => {
-                                event.stopPropagation();
-                                updateSpeakerCharacterTypeForBook(speaker.name, event.target.value);
-                              }}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <option value="">Choose character type…</option>
-                              {characterTypeOptionsForSpeaker(speaker).map((option) => (
-                                <option key={`${speaker.name}-${option.value}`} value={option.value}>
-                                  {option.label} — {option.detail}
-                                </option>
-                              ))}
-                            </select>
-                            <select
-                              aria-label={`Voice type for ${speaker.name}`}
-                              value={canonicalVoiceValue(speaker.approved_voice)}
-                              onChange={(event) => {
-                                event.stopPropagation();
-                                updateSpeakerVoiceForBook(speaker.name, event.target.value);
-                              }}
-                              onClick={(event) => event.stopPropagation()}
-                            >
-                              <option value="">Choose voice type…</option>
-                              {voiceOptionsForSpeaker(speaker).map((option) => (
-                                <option key={`${speaker.name}-${option.value}`} value={option.value}>
-                                  {option.label} — {option.detail}
-                                </option>
-                              ))}
-                            </select>
-                            {speaker.gender === "masculine" && (
-                              <small className="studio-warning">No masculine reference voice is installed. Add a masculine approved voice WAV before final casting this character.</small>
-                            )}
-                            <div className="actions">
-                              {voiceOptionsForSpeaker(speaker).map((option) => (
-                                <button
-                                  key={`${speaker.name}-${option.value}`}
-                                  className={`button ghost ${canonicalVoiceValue(speaker.approved_voice) === option.value ? "selected" : ""}`}
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    updateSpeakerVoiceForBook(speaker.name, option.value);
-                                  }}
-                                >
-                                  {option.label}
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )) : <p className="materials-empty">No speakers have been identified for this episode yet.</p>}
-                    </div>
+                    </details>
                     <div className="actions">
                       <button className="button primary" disabled={unassignedDialogueCount(activeScene) > 0} onClick={approveVoices}>Approve voices → sound effects</button>
                     </div>
